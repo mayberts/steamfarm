@@ -4,7 +4,7 @@ import SteamTotp from 'steam-totp';
 import { config } from './config';
 import { Logger } from './log';
 import { AccountRecord, PersonaStateName, store } from './store';
-import { DropInfo, fetchCardDrops } from './badges';
+import { DropInfo, fetchBadgeGames } from './badges';
 import { getGlobalPercentages, getUserStats, setAchievements, UserStats } from './achievements';
 
 export type BotStatus = 'stopped' | 'connecting' | 'awaiting_guard' | 'online' | 'error';
@@ -353,14 +353,15 @@ export class Bot {
     this.farmTimer = null;
     if (!this.account.farming || this.status !== 'online') return;
     try {
-      let drops: DropInfo[];
+      let badges: DropInfo[];
       try {
-        drops = await fetchCardDrops(this.account.steamId!, await this.ensureWebSession());
+        badges = await fetchBadgeGames(this.account.steamId!, await this.ensureWebSession());
       } catch (err) {
         if (!(err instanceof Error) || !err.message.includes('session expired')) throw err;
         this.webSessionAt = 0;
-        drops = await fetchCardDrops(this.account.steamId!, await this.ensureWebSession());
+        badges = await fetchBadgeGames(this.account.steamId!, await this.ensureWebSession());
       }
+      const drops = badges.filter((b) => b.dropsRemaining > 0);
       if (!this.account.farming) return;
       const blacklist = new Set(this.account.farm.blacklist);
       // Farm the games closest to finishing first so badges complete sooner.
@@ -368,12 +369,15 @@ export class Bot {
       this.farmLastCheck = Date.now();
       const total = this.farmGames.reduce((n, g) => n + g.dropsRemaining, 0);
       if (this.farmGames.length === 0) {
-        this.farmMessage = 'No card drops remaining';
-        this.log.info('Card farming finished: no drops remaining');
+        // Zero badges almost always means the page could not be read, not that farming is done.
+        this.farmMessage = badges.length
+          ? `No card drops remaining (checked ${badges.length} game badge(s))`
+          : 'No game badges found on your badge page. If you own games with trading cards, Steam may have changed the page';
+        this.log[badges.length ? 'info' : 'warn'](`Card farming finished: ${this.farmMessage}`);
         this.stopFarming();
         return;
       }
-      this.farmMessage = `${total} drop(s) left across ${this.farmGames.length} game(s)`;
+      this.farmMessage = `${total} drop(s) left across ${this.farmGames.length} game(s) (checked ${badges.length} game badge(s))`;
       this.log.info(`Card farming: ${this.farmMessage}`);
       this.applyGames();
     } catch (err) {
