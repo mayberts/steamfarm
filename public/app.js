@@ -44,6 +44,8 @@ const ICONS = {
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   external: '<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  box: '<path d="M21 8v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8M2 3h20v5H2zM10 12h4"/>',
+  tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
 };
 const FILLED = new Set(['play', 'stop']);
@@ -346,7 +348,7 @@ $('#scrim').addEventListener('click', closeSidebar);
 $('#search').addEventListener('input', (e) => {
   search = e.target.value;
   const { page } = route();
-  if (page !== 'games' && page !== 'favorites' && page !== 'unlocker') location.hash = '#/games';
+  if (page !== 'games' && page !== 'favorites' && page !== 'unlocker' && page !== 'inventory') location.hash = '#/games';
   else render(false);
 });
 
@@ -372,6 +374,7 @@ const PAGES = {
   game: { build: buildGame, update: updateGame },
   activity: { build: buildActivity, update: updateActivity },
   settings: { build: buildSettings, update: updateSettings },
+  inventory: { build: buildInventory, update: updateInventory },
 };
 
 function render(force) {
@@ -394,7 +397,7 @@ function render(force) {
   const key = `${acc.username}|${page}|${arg ?? ''}`;
   if (force || built !== key) {
     built = key;
-    main.replaceChildren(...[].concat(def.build(acc, arg)));
+    main.replaceChildren(...[].concat(def.build(acc, arg)).filter((c) => c !== null && c !== undefined && c !== false));
     hydrateIcons(main);
     main.dataset.sig = '';
   }
@@ -405,7 +408,7 @@ function render(force) {
 function redraw(container, signature, build) {
   if (!container || container.dataset.sig === signature) return;
   container.dataset.sig = signature;
-  container.replaceChildren(...[].concat(build()));
+  container.replaceChildren(...[].concat(build()).filter((c) => c !== null && c !== undefined && c !== false));
 }
 
 // ---------------------------------------------------------------- games
@@ -1044,6 +1047,370 @@ async function removeAccount() {
   await act('DELETE', '');
   selected = null;
   location.hash = '#/games';
+}
+
+// ---------------------------------------------------------------- inventory & market
+
+// Same maths as the market page: 5% Steam fee and 10% publisher fee, each at least 1 cent.
+const buyerPays = (seller) => seller + Math.floor(Math.max(seller * 0.05, 1)) + Math.floor(Math.max(seller * 0.1, 1));
+function sellerReceives(buyer) {
+  let seller = Math.max(0, Math.floor(buyer / 1.15) + 2);
+  while (seller > 0 && buyerPays(seller) > buyer) seller--;
+  return seller;
+}
+const MIN_PRICE = 3;
+
+const KINDS = [
+  ['all', 'All'], ['card', 'Cards'], ['foil', 'Foils'], ['background', 'Backgrounds'],
+  ['emoticon', 'Emoticons'], ['booster', 'Boosters'], ['gems', 'Gems'], ['other', 'Other'],
+];
+
+let inv = { for: null, loading: false, error: '', currency: 'USD', items: [], tab: 'items', kind: 'all', marketableOnly: false, selected: new Map(), prices: new Map(), listings: null, listingsLoading: false, chosenListings: new Set() };
+
+function money(cents) {
+  if (cents === null || cents === undefined) return '–';
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: inv.currency }).format(cents / 100);
+  } catch {
+    return (cents / 100).toFixed(2);
+  }
+}
+const toCents = (text) => {
+  const n = Number(String(text).replace(',', '.').replace(/[^\d.]/g, ''));
+  return Number.isFinite(n) ? Math.round(n * 100) : NaN;
+};
+
+async function loadInventory(force = false) {
+  const acc = current();
+  if (!acc || acc.status !== 'online') return;
+  inv.loading = true;
+  inv.error = '';
+  render(false);
+  try {
+    const res = await api('GET', `${accPath('inventory')}${force ? '?refresh=1' : ''}`);
+    inv.items = res.items;
+    inv.currency = res.currency;
+    inv.for = acc.username;
+    // Drop selections for items that are gone.
+    const keys = new Set(res.items.map((i) => i.marketHashName));
+    for (const k of [...inv.selected.keys()]) if (!keys.has(k)) inv.selected.delete(k);
+  } catch (err) {
+    inv.error = err.message;
+  }
+  inv.loading = false;
+  render(false);
+}
+
+async function loadListings() {
+  inv.listingsLoading = true;
+  render(false);
+  try {
+    inv.listings = await api('GET', accPath('market/listings'));
+  } catch (err) {
+    toast(err.message, 'err');
+    inv.listings = inv.listings ?? [];
+  }
+  inv.listingsLoading = false;
+  inv.chosenListings.clear();
+  render(false);
+}
+
+function buildInventory(acc) {
+  if (inv.for !== acc.username) {
+    inv = { ...inv, for: acc.username, items: [], selected: new Map(), listings: null, chosenListings: new Set() };
+    setTimeout(() => loadInventory(), 0);
+  }
+  return [
+    el('div', { class: 'page-head' },
+      el('div', {}, el('h1', {}, 'Inventory Manager'), el('div', { class: 'sub', id: 'inv-sub' })),
+      el('div', { class: 'row wrap', id: 'inv-actions' }),
+    ),
+    el('div', { id: 'inv-job' }),
+    el('div', { class: 'row wrap between' },
+      el('div', { class: 'tabs' },
+        el('button', { class: `tab ${inv.tab === 'items' ? 'active' : ''}`, type: 'button', onclick: () => { inv.tab = 'items'; render(true); } }, 'Items'),
+        el('button', { class: `tab ${inv.tab === 'listings' ? 'active' : ''}`, type: 'button', onclick: () => { inv.tab = 'listings'; if (!inv.listings) loadListings(); render(true); } }, 'My listings'),
+      ),
+      inv.tab === 'items'
+        ? el('div', { class: 'row wrap' },
+            el('select', { 'aria-label': 'Item type', onchange: (e) => { inv.kind = e.target.value; render(false); } },
+              ...KINDS.map(([v, label]) => el('option', { value: v, selected: inv.kind === v }, label))),
+            el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: inv.marketableOnly, onchange: (e) => { inv.marketableOnly = e.target.checked; render(false); } }), 'Marketable only'),
+          )
+        : null,
+    ),
+    el('div', { id: 'inv-body' }),
+  ];
+}
+
+function visibleItems() {
+  const q = search.trim().toLowerCase();
+  return inv.items.filter((i) =>
+    (inv.kind === 'all' || i.kind === inv.kind) &&
+    (!inv.marketableOnly || i.marketable) &&
+    (!q || i.name.toLowerCase().includes(q) || i.game.toLowerCase().includes(q) || i.type.toLowerCase().includes(q)));
+}
+
+function updateInventory(acc) {
+  const copies = inv.items.reduce((n, i) => n + i.assetids.length, 0);
+  $('#inv-sub').textContent = acc.status !== 'online'
+    ? 'Log in to see your inventory'
+    : inv.loading && !inv.items.length ? 'Loading inventory…' : `${copies} item${copies === 1 ? '' : 's'} · ${inv.items.length} distinct`;
+  const selCount = [...inv.selected.values()].reduce((n, q) => n + q, 0);
+  const job = acc.sellJob;
+  redraw($('#inv-actions'), JSON.stringify([inv.tab, selCount, inv.loading, Boolean(job?.running), acc.status, inv.chosenListings.size, inv.listingsLoading]), () =>
+    inv.tab === 'items'
+      ? [
+          el('button', { class: 'secondary', disabled: !inv.items.length, onclick: selectDuplicates }, 'Select duplicates'),
+          selCount ? el('button', { class: 'secondary', onclick: () => { inv.selected.clear(); render(false); } }, 'Clear') : null,
+          el('button', { class: 'light', disabled: !selCount || job?.running || acc.status !== 'online', onclick: openSellDialog }, icon('tag'), selCount ? `List ${selCount} selected` : 'List selected'),
+          el('button', { class: 'icon-btn', title: 'Reload inventory', disabled: inv.loading, onclick: () => loadInventory(true) }, icon('refresh')),
+        ]
+      : [
+          el('button', { class: 'danger', disabled: !inv.chosenListings.size, onclick: removeChosenListings }, `Remove ${inv.chosenListings.size || ''} selected`.replace('  ', ' ')),
+          el('button', { class: 'icon-btn', title: 'Reload listings', disabled: inv.listingsLoading, onclick: loadListings }, icon('refresh')),
+        ]);
+  redraw($('#inv-job'), JSON.stringify(job), () => {
+    if (!job || (!job.running && Date.now() - job.finishedAt > 10 * 60_000)) return '';
+    return el('div', { class: `banner ${job.failed ? 'warn' : ''}` },
+      el('div', { class: 'stack grow' },
+        el('strong', {}, job.running ? `Listing items… ${job.done} / ${job.total}` : `Listed ${job.listed} of ${job.total} item${job.total === 1 ? '' : 's'}`),
+        job.running ? progressBar(job.done / job.total) : null,
+        job.needsConfirmation ? el('span', {}, `${job.needsConfirmation} listing${job.needsConfirmation === 1 ? '' : 's'} must be confirmed in the Steam mobile app (or by email) before they appear on the market.`) : null,
+        ...job.errors.slice(0, 5).map((e) => el('span', { class: 'small error' }, e)),
+      ),
+    );
+  });
+  if (inv.tab === 'listings') return updateListings();
+  const list = visibleItems();
+  redraw($('#inv-body'), JSON.stringify([inv.loading, inv.error, list.map((i) => [i.marketHashName, i.assetids.length]), [...inv.selected], [...inv.prices.keys()].length, acc.status]), () => {
+    if (acc.status !== 'online') return el('div', { class: 'empty' }, 'Log in to see your inventory.');
+    if (inv.error) return el('div', { class: 'empty error' }, inv.error);
+    if (inv.loading && !inv.items.length) return el('div', { class: 'empty' }, 'Loading…');
+    if (!list.length) return el('div', { class: 'empty' }, inv.items.length ? 'No items match.' : 'No Steam community items in this inventory.');
+    return el('div', { class: 'grid inv-grid' }, ...list.slice(0, 600).map(invTile));
+  });
+}
+
+function invTile(item) {
+  const sel = inv.selected.get(item.marketHashName) ?? 0;
+  const price = inv.prices.get(item.marketHashName);
+  const toggle = () => {
+    if (!item.marketable) return;
+    if (sel) inv.selected.delete(item.marketHashName);
+    else inv.selected.set(item.marketHashName, item.assetids.length);
+    render(false);
+  };
+  return el('div', { class: `inv-tile ${sel ? 'selected' : ''} ${item.marketable ? '' : 'locked'}`, onclick: toggle, title: item.marketable ? item.type : `${item.type} · not marketable` },
+    el('div', { class: 'inv-top' },
+      item.marketable ? el('input', { type: 'checkbox', checked: Boolean(sel), onclick: (e) => e.stopPropagation(), onchange: toggle, 'aria-label': `Select ${item.name}` }) : el('span', {}),
+      item.marketable ? (item.assetids.length > 1 ? el('span', { class: 'pill' }, `×${item.assetids.length}`) : el('span', {})) : el('span', { class: 'muted' }, icon('lock')),
+    ),
+    el('img', { src: item.icon, alt: '', loading: 'lazy' }),
+    el('div', { class: 'inv-name' }, item.name),
+    el('div', { class: 'inv-type' }, item.type),
+    el('div', { class: 'inv-price' }, sel && sel !== item.assetids.length ? `Selling ${sel} of ${item.assetids.length}` : price?.lowest ? money(price.lowest) : ''),
+  );
+}
+
+function selectDuplicates() {
+  inv.selected.clear();
+  for (const i of inv.items) {
+    // Keep one of each card for crafting; foils and boosters are worth keeping one too.
+    if (i.marketable && i.assetids.length > 1 && i.kind !== 'gems') inv.selected.set(i.marketHashName, i.assetids.length - 1);
+  }
+  const n = [...inv.selected.values()].reduce((a, b) => a + b, 0);
+  toast(n ? `Selected ${n} duplicate${n === 1 ? '' : 's'} (keeping one of each)` : 'No duplicates to sell');
+  render(false);
+}
+
+// -------------------------------------------------------------- sell dialog
+
+let sell = null;
+
+function openSellDialog() {
+  const rows = [...inv.selected]
+    .map(([name, qty]) => ({ item: inv.items.find((i) => i.marketHashName === name), qty }))
+    .filter((r) => r.item && r.item.marketable)
+    .map((r) => ({ ...r, price: null, lowest: inv.prices.get(r.item.marketHashName)?.lowest ?? null, status: 'pending' }));
+  sell = { rows, strategy: 'match', floor: MIN_PRICE, confirmed: false, fetching: true };
+  for (const r of rows) if (r.lowest !== null) { r.status = 'ok'; r.price = priceFor(r.lowest); }
+  renderSellDialog();
+  $('#sell-dialog').showModal();
+  fetchSellPrices();
+}
+
+function priceFor(lowest) {
+  if (lowest === null) return null;
+  const base = sell.strategy === 'undercut' ? lowest - 1 : lowest;
+  return Math.max(sell.floor, MIN_PRICE, base);
+}
+
+async function fetchSellPrices() {
+  for (const r of sell?.rows ?? []) {
+    if (!sell || !$('#sell-dialog').open) return;
+    if (r.status === 'ok') continue;
+    try {
+      const info = await api('GET', `${accPath('market/price')}?name=${encodeURIComponent(r.item.marketHashName)}`);
+      inv.prices.set(r.item.marketHashName, info);
+      r.lowest = info.lowest ?? info.median;
+      r.status = r.lowest !== null ? 'ok' : 'none';
+      if (r.price === null) r.price = priceFor(r.lowest);
+    } catch (err) {
+      r.status = 'error';
+      r.error = err.message;
+    }
+    renderSellDialog();
+  }
+  if (sell) {
+    sell.fetching = false;
+    renderSellDialog();
+  }
+}
+
+function sellTotals() {
+  let copies = 0;
+  let receive = 0;
+  let missing = 0;
+  for (const r of sell.rows) {
+    if (r.price === null || r.price < MIN_PRICE) { missing++; continue; }
+    copies += r.qty;
+    receive += sellerReceives(r.price) * r.qty;
+  }
+  return { copies, receive, missing };
+}
+
+function renderSellDialog() {
+  const d = $('#sell-dialog');
+  if (!sell) return;
+  // Keep focus in a price field while typing: only rebuild rows that are not being edited.
+  const active = document.activeElement;
+  if (active && active.dataset && active.dataset.row && d.contains(active)) {
+    updateSellFooter();
+    return;
+  }
+  const done = sell.rows.filter((r) => r.status !== 'pending').length;
+  d.replaceChildren(
+    el('div', { class: 'row between' },
+      el('h2', {}, 'List on the Community Market'),
+      el('button', { class: 'icon-btn plain', title: 'Close', onclick: closeSellDialog }, '✕'),
+    ),
+    el('p', { class: 'muted small' },
+      'Prices are what the buyer pays. You receive that minus Steam’s fees (5% Steam + 10% publisher, minimum 1 each). ',
+      sell.fetching ? `Fetching market prices ${done} / ${sell.rows.length}… (Steam limits how fast this can go)` : ''),
+    el('div', { class: 'row wrap' },
+      el('label', {}, 'Pricing',
+        el('select', { onchange: (e) => { sell.strategy = e.target.value; repriceAll(); } },
+          el('option', { value: 'match', selected: sell.strategy === 'match' }, 'Match lowest listing'),
+          el('option', { value: 'undercut', selected: sell.strategy === 'undercut' }, 'Undercut lowest by 0.01'))),
+      el('label', {}, 'Minimum price',
+        el('input', { class: 'w90', value: (sell.floor / 100).toFixed(2), onchange: (e) => { const c = toCents(e.target.value); sell.floor = Number.isFinite(c) ? Math.max(MIN_PRICE, c) : MIN_PRICE; repriceAll(); } })),
+    ),
+    el('div', { class: 'sell-rows' },
+      el('div', { class: 'sell-row head' }, el('span', {}), el('span', {}, 'Item'), el('span', {}, 'Qty'), el('span', {}, 'Lowest'), el('span', {}, 'Buyer pays'), el('span', {}, 'You get')),
+      ...sell.rows.map((r, i) =>
+        el('div', { class: 'sell-row' },
+          el('img', { src: r.item.icon, alt: '' }),
+          el('span', { class: 'sell-name', title: r.item.type }, r.item.name),
+          el('input', { type: 'number', min: '1', max: String(r.item.assetids.length), value: r.qty, 'data-row': i, class: 'qty', onchange: (e) => { r.qty = Math.min(r.item.assetids.length, Math.max(1, Math.floor(Number(e.target.value) || 1))); e.target.value = r.qty; updateSellFooter(); } }),
+          el('span', { class: 'muted small' }, r.status === 'pending' ? '…' : r.status === 'error' ? 'n/a' : money(r.lowest)),
+          el('input', { value: r.price === null ? '' : (r.price / 100).toFixed(2), placeholder: r.status === 'pending' ? '…' : 'Set price', 'data-row': i, class: 'price', oninput: (e) => { const c = toCents(e.target.value); r.price = Number.isFinite(c) && c > 0 ? c : null; updateSellFooter(); }, onblur: () => renderSellDialog() }),
+          el('span', { class: 'receive', id: `recv-${i}` }, r.price !== null && r.price >= MIN_PRICE ? money(sellerReceives(r.price)) : '–'),
+        ),
+      ),
+    ),
+    el('div', { id: 'sell-footer', class: 'stack' }),
+  );
+  updateSellFooter();
+}
+
+function repriceAll() {
+  for (const r of sell.rows) if (r.lowest !== null) r.price = priceFor(r.lowest);
+  renderSellDialog();
+}
+
+function updateSellFooter() {
+  const footer = $('#sell-footer');
+  if (!footer || !sell) return;
+  sell.rows.forEach((r, i) => {
+    const node = $(`#recv-${i}`);
+    if (node) node.textContent = r.price !== null && r.price >= MIN_PRICE ? money(sellerReceives(r.price)) : '–';
+  });
+  const t = sellTotals();
+  footer.replaceChildren(
+    el('div', { class: 'row between wrap' },
+      el('strong', {}, `${t.copies} item${t.copies === 1 ? '' : 's'} · you receive about ${money(t.receive)}`),
+      t.missing ? el('span', { class: 'warn small' }, `${t.missing} item${t.missing === 1 ? '' : 's'} without a price will be skipped`) : null,
+    ),
+    el('label', { class: 'check' },
+      el('input', { type: 'checkbox', checked: sell.confirmed, onchange: (e) => { sell.confirmed = e.target.checked; updateSellFooter(); } }),
+      'I understand these items will be listed for sale on the Steam Community Market at these prices.'),
+    el('div', { class: 'row end' },
+      el('button', { class: 'secondary', onclick: closeSellDialog }, 'Cancel'),
+      el('button', { disabled: !sell.confirmed || !t.copies, onclick: submitSell }, icon('tag'), `List ${t.copies} item${t.copies === 1 ? '' : 's'}`),
+    ),
+  );
+}
+
+function closeSellDialog() {
+  sell = null;
+  $('#sell-dialog').close();
+}
+$('#sell-dialog').addEventListener('close', () => { sell = null; });
+
+async function submitSell() {
+  const items = [];
+  for (const r of sell.rows) {
+    if (r.price === null || r.price < MIN_PRICE) continue;
+    for (const assetid of r.item.assetids.slice(0, r.qty)) items.push({ assetid, price: r.price });
+  }
+  const res = await act('POST', 'market/sell', { items, confirm: true });
+  if (res) {
+    toast(`Listing ${res.queued} item${res.queued === 1 ? '' : 's'}… progress is shown on this page`);
+    inv.selected.clear();
+    closeSellDialog();
+  }
+}
+
+// ----------------------------------------------------------------- listings
+
+function updateListings() {
+  redraw($('#inv-body'), JSON.stringify([inv.listingsLoading, inv.listings, [...inv.chosenListings]]), () => {
+    if (inv.listingsLoading && !inv.listings) return el('div', { class: 'empty' }, 'Loading listings…');
+    if (!inv.listings?.length) return el('div', { class: 'empty' }, 'You have no active market listings.');
+    const total = inv.listings.reduce((n, l) => n + l.sellerPrice, 0);
+    return el('div', { class: 'stack' },
+      el('div', { class: 'row between wrap' },
+        el('span', { class: 'muted' }, `${inv.listings.length} listing${inv.listings.length === 1 ? '' : 's'} · you would receive ${money(total)}`),
+        el('label', { class: 'check' },
+          el('input', { type: 'checkbox', checked: inv.chosenListings.size === inv.listings.length, onchange: (e) => { inv.chosenListings = new Set(e.target.checked ? inv.listings.map((l) => l.listingid) : []); render(false); } }),
+          'Select all'),
+      ),
+      el('div', { class: 'ach-list' },
+        ...inv.listings.map((l) =>
+          el('label', { class: `ach listing ${inv.chosenListings.has(l.listingid) ? 'pending' : ''}` },
+            el('input', { type: 'checkbox', checked: inv.chosenListings.has(l.listingid), onchange: (e) => { if (e.target.checked) inv.chosenListings.add(l.listingid); else inv.chosenListings.delete(l.listingid); render(false); } }),
+            l.icon ? el('img', { src: l.icon, alt: '' }) : el('span', { class: 'ach-icon' }, icon('tag')),
+            el('div', {},
+              el('div', { class: 'title' }, l.name, l.pending ? el('span', { class: 'pill' }, 'Awaiting confirmation') : ''),
+              el('div', { class: 'desc' }, `Buyer pays ${money(l.buyerPrice)} · you receive ${money(l.sellerPrice)}`)),
+          ),
+        ),
+      ),
+    );
+  });
+}
+
+async function removeChosenListings() {
+  const ids = [...inv.chosenListings];
+  if (!ids.length || !confirm(`Remove ${ids.length} listing${ids.length === 1 ? '' : 's'} from the market? The items go back to your inventory.`)) return;
+  const res = await act('POST', 'market/remove', { listingids: ids });
+  if (res) {
+    toast(`Removed ${res.removed} listing${res.removed === 1 ? '' : 's'}${res.errors.length ? ` (${res.errors.length} failed)` : ''}`, res.errors.length ? 'err' : '');
+    inv.items = [];
+    loadListings();
+    loadInventory(true);
+  }
 }
 
 // ================================================================ add account

@@ -4,6 +4,7 @@ import Schema from 'steam-user/protobufs/generated/_load.js';
 import { parseSchema } from '../achievements';
 import { describeBadgePage, fetchBadgeGames, parseBadgePage } from '../badges';
 import { parseFreeSearch, pickFreePackage } from '../freegames';
+import { buyerPays, groupInventory, parsePrice, sellerReceives } from '../market';
 
 test('parseBadgePage finds games with drops, names, hours and pages', () => {
   const html = `
@@ -246,4 +247,61 @@ test('pickFreePackage prefers the package currently priced at zero', () => {
   );
   assert.equal(pickFreePackage({ packages: [300] }), 300);
   assert.equal(pickFreePackage(null), undefined);
+});
+
+test('market fees match the market page in both directions', () => {
+  assert.equal(buyerPays(1), 3);
+  assert.equal(buyerPays(10), 12);
+  assert.equal(buyerPays(100), 115);
+  assert.equal(buyerPays(101), 116);
+  assert.equal(sellerReceives(2), 0);
+  assert.equal(sellerReceives(3), 1);
+  assert.equal(sellerReceives(114), 99);
+  assert.equal(sellerReceives(115), 100);
+  assert.equal(sellerReceives(116), 101);
+  // Never more than the buyer pays, and always the best possible.
+  for (let b = 3; b <= 5000; b++) {
+    const s = sellerReceives(b);
+    assert.ok(buyerPays(s) <= b, `buyer ${b}`);
+    assert.ok(buyerPays(s + 1) > b, `buyer ${b} not maximal`);
+  }
+});
+
+test('parsePrice handles currency formats', () => {
+  assert.equal(parsePrice('$0.05'), 5);
+  assert.equal(parsePrice('£1,234.56'), 123456);
+  assert.equal(parsePrice('0,05€'), 5);
+  assert.equal(parsePrice('1.234,50 zł'), 123450);
+  assert.equal(parsePrice('¥ 120'), 12000);
+  assert.equal(parsePrice('R$ 2,10'), 210);
+  assert.equal(parsePrice(undefined), null);
+  assert.equal(parsePrice('--'), null);
+});
+
+test('groupInventory stacks duplicates and classifies items', () => {
+  type Tag = { category: string; internal_name: string; localized_tag_name?: string };
+  const tags = (cls: string, extra: Tag[] = []): Tag[] => [{ category: 'item_class', internal_name: cls }, { category: 'Game', internal_name: 'app_1', localized_tag_name: 'Pixel Harvest' }, ...extra];
+  const items = groupInventory(
+    [
+      { assetid: '1', classid: 'c1', instanceid: '0', amount: '1' },
+      { assetid: '2', classid: 'c1', instanceid: '0', amount: '1' },
+      { assetid: '3', classid: 'c2', instanceid: '0', amount: '1' },
+      { assetid: '4', classid: 'c3', instanceid: '0', amount: '1' },
+      { assetid: '5', classid: 'gems', instanceid: '0', amount: '450' },
+    ],
+    [
+      { classid: 'c1', instanceid: '0', name: 'Harvest Moon', market_hash_name: '1-Harvest Moon', type: 'Pixel Harvest Trading Card', icon_url: 'a', marketable: 1, tradable: 1, tags: tags('item_class_2', [{ category: 'cardborder', internal_name: 'cardborder_0' }]) },
+      { classid: 'c2', instanceid: '0', name: 'Harvest Moon (Foil)', market_hash_name: '1-Harvest Moon (Foil)', type: 'Pixel Harvest Foil Trading Card', icon_url: 'b', marketable: 1, tradable: 1, tags: tags('item_class_2', [{ category: 'cardborder', internal_name: 'cardborder_1' }]) },
+      { classid: 'c3', instanceid: '0', name: ':sprout:', market_hash_name: '1-:sprout:', type: 'Pixel Harvest Emoticon', icon_url: 'c', marketable: 0, tradable: 0, tags: tags('item_class_4') },
+      { classid: 'gems', instanceid: '0', name: 'Gems', market_hash_name: '753-Gems', type: 'Steam Gems', icon_url: 'd', marketable: 0, tradable: 1, tags: tags('item_class_7') },
+    ],
+  );
+  const byName = Object.fromEntries(items.map((i) => [i.name, i]));
+  assert.deepEqual(byName['Harvest Moon'].assetids, ['1', '2']);
+  assert.equal(byName['Harvest Moon'].kind, 'card');
+  assert.equal(byName['Harvest Moon (Foil)'].kind, 'foil');
+  assert.equal(byName[':sprout:'].kind, 'emoticon');
+  assert.equal(byName[':sprout:'].marketable, false);
+  assert.deepEqual(byName.Gems.assetids, ['5']);
+  assert.equal(byName['Harvest Moon'].game, 'Pixel Harvest');
 });

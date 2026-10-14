@@ -227,6 +227,26 @@ export function createServer() {
   }));
   api.post('/free-games/check', h(() => manager.freeGames.check()));
   api.post('/free-games/test-webhook', h(() => manager.freeGames.testWebhook()));
+  api.get('/accounts/:name/inventory', h((req) => manager.get(param(req, 'name')).inventory(req.query.refresh === '1')));
+  api.get('/accounts/:name/market/price', h((req) => {
+    const name = String(req.query.name ?? '');
+    if (!name) throw Object.assign(new Error('Missing item name'), { status: 400 });
+    return manager.get(param(req, 'name')).price(name);
+  }));
+  api.post('/accounts/:name/market/sell', h((req) => {
+    // Selling spends nothing but lists real items for real money: require an explicit confirmation flag.
+    if (req.body?.confirm !== true) throw Object.assign(new Error('Selling needs confirm: true'), { status: 400 });
+    const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 500) : [];
+    const queued = manager.get(param(req, 'name')).startSelling(
+      items.map((i: { assetid?: unknown; price?: unknown }) => ({ assetid: String(i?.assetid ?? ''), price: Number(i?.price) })),
+    );
+    return { queued };
+  }));
+  api.get('/accounts/:name/market/listings', h((req) => manager.get(param(req, 'name')).listings()));
+  api.post('/accounts/:name/market/remove', h((req) => {
+    const ids = Array.isArray(req.body?.listingids) ? req.body.listingids.map(String) : [];
+    return manager.get(param(req, 'name')).removeListings(ids);
+  }));
   api.post('/accounts/:name/free-games/claim', h(async (req) => {
     const promo = manager.freeGames.promos.find((p) => p.key === String(req.body?.key ?? ''));
     if (!promo) throw Object.assign(new Error('That game is no longer free'), { status: 404 });

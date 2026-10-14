@@ -6,6 +6,20 @@ import { Logger } from './log';
 import { AccountRecord, FreePromo, PersonaStateName, store } from './store';
 import { DropInfo, fetchBadgeGames } from './badges';
 import { fetchAppDetails, pickFreePackage } from './freegames';
+import {
+  CURRENCIES,
+  fetchInventory,
+  fetchListings,
+  InventoryItem,
+  Listing,
+  MAX_BUYER_PRICE,
+  MIN_BUYER_PRICE,
+  priceOverview,
+  PriceInfo,
+  removeListing,
+  sellItem,
+  SellResult,
+} from './market';
 import { getGlobalPercentages, getUserStats, setAchievements, UserStats } from './achievements';
 
 export type BotStatus = 'stopped' | 'connecting' | 'awaiting_guard' | 'online' | 'error';
@@ -61,6 +75,10 @@ export class Bot {
   private webSessionAt = 0;
   private ownedGames: OwnedGame[] | null = null;
   private ownedGamesAt = 0;
+  private inventoryCache: InventoryItem[] | null = null;
+  private inventoryAt = 0;
+  /** The current or last market selling run, shown in the UI. */
+  sellJob: { running: boolean; total: number; done: number; listed: number; failed: number; needsConfirmation: number; errors: string[]; finishedAt: number } | null = null;
   /** When each app currently sent to Steam started being played (epoch ms). */
   private idleSince = new Map<number, number>();
   private farmTimer: NodeJS.Timeout | null = null;
@@ -508,6 +526,118 @@ export class Bot {
     if (res.status === 500) throw new Error('Store returned HTTP 500');
   }
 
+  // ------------------------------------------------------------- inventory
+
+  /** Steam currency code of the account's wallet (1 = USD when unknown). */
+  get currencyCode(): number {
+    return Number(this.client?.wallet?.currency) || 1;
+  }
+
+  async inventory(force = false): Promise<{ currency: string; items: InventoryItem[] }> {
+    this.requireOnline();
+    if (force || !this.inventoryCache || Date.now() - this.inventoryAt > 5 * 60_000) {
+      this.inventoryCache = await this.withWebSession((cookies) => fetchInventory(this.account.steamId!, cookies));
+      this.inventoryAt = Date.now();
+    }
+    return { currency: CURRENCIES[this.currencyCode] ?? 'USD', items: this.inventoryCache };
+  }
+
+  price(marketHashName: string): Promise<PriceInfo> {
+    this.requireOnline();
+    return priceOverview(marketHashName, this.currencyCode);
+  }
+
+  /**
+   * List items on the Community Market, one at a time in the background.
+   * Only asset IDs from this account's inventory are accepted.
+   */
+  startSelling(items: { assetid: string; price: number }[]): number {
+    this.requireOnline();
+    if (this.sellJob?.running) throw Object.assign(new Error('Already listing items; wait for it to finish'), { status: 409 });
+    if (!this.inventoryCache) throw Object.assign(new Error('Load the inventory first'), { status: 400 });
+    const owned = new Map<string, InventoryItem>();
+    for (const item of this.inventoryCache) for (const id of item.assetids) owned.set(id, item);
+    const queue: { assetid: string; price: number; name: string }[] = [];
+    const seen = new Set<string>();
+    for (const { assetid, price } of items) {
+      const item = owned.get(String(assetid));
+      if (!item || !item.marketable) throw Object.assign(new Error(`Item ${assetid} is not a marketable item in this inventory`), { status: 400 });
+      if (!Number.isInteger(price) || price < MIN_BUYER_PRICE || price > MAX_BUYER_PRICE) {
+        throw Object.assign(new Error(`Invalid price for ${item.name}`), { status: 400 });
+      }
+      if (seen.has(String(assetid))) continue;
+      seen.add(String(assetid));
+      queue.push({ assetid: String(assetid), price, name: item.name });
+    }
+    if (!queue.length) throw Object.assign(new Error('Nothing to list'), { status: 400 });
+    const job = { running: true, total: queue.length, done: 0, listed: 0, failed: 0, needsConfirmation: 0, errors: [] as string[], finishedAt: 0 };
+    this.sellJob = job;
+    this.log.info(`Listing ${queue.length} item(s) on the Community Market`);
+    void (async () => {
+      for (const entry of queue) {
+        if (this.status !== 'online') {
+          job.errors.push('Account went offline; stopped');
+          break;
+        }
+        let result: SellResult;
+        try {
+          result = await this.withWebSession((cookies) => sellItem(this.account.steamId!, cookies, entry.assetid, entry.price));
+        } catch (err) {
+          result = { assetid: entry.assetid, ok: false, error: (err as Error).message };
+        }
+        job.done++;
+        if (result.ok) {
+          job.listed++;
+          if (result.needsConfirmation) job.needsConfirmation++;
+        } else {
+          job.failed++;
+          if (job.errors.length < 20) job.errors.push(`${entry.name}: ${result.error}`);
+        }
+        // Steam throttles rapid listing; keep a steady pace.
+        await new Promise((r) => setTimeout(r, 1_500));
+      }
+      job.running = false;
+      job.finishedAt = Date.now();
+      this.inventoryCache = null;
+      const confirm = job.needsConfirmation ? `, ${job.needsConfirmation} waiting for confirmation in the Steam app` : '';
+      this.log.info(`Market: listed ${job.listed} of ${job.total} item(s)${confirm}${job.failed ? `, ${job.failed} failed` : ''}`);
+    })();
+    return queue.length;
+  }
+
+  listings(): Promise<Listing[]> {
+    this.requireOnline();
+    return this.withWebSession((cookies) => fetchListings(cookies));
+  }
+
+  async removeListings(ids: string[]): Promise<{ removed: number; errors: string[] }> {
+    this.requireOnline();
+    let removed = 0;
+    const errors: string[] = [];
+    for (const id of ids.slice(0, 500)) {
+      try {
+        await this.withWebSession((cookies) => removeListing(this.account.steamId!, cookies, String(id)));
+        removed++;
+      } catch (err) {
+        errors.push((err as Error).message);
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (removed) this.log.info(`Market: removed ${removed} listing(s)`);
+    return { removed, errors };
+  }
+
+  /** Run a web request with the session cookies, renewing the session once if it has expired. */
+  private async withWebSession<T>(fn: (cookies: string[]) => Promise<T>): Promise<T> {
+    try {
+      return await fn(await this.ensureWebSession());
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.includes('session expired')) throw err;
+      this.webSessionAt = 0;
+      return fn(await this.ensureWebSession());
+    }
+  }
+
   // ------------------------------------------------------------- achievements
 
   async getAchievements(appid: number): Promise<UserStats> {
@@ -628,6 +758,7 @@ export class Bot {
         message: this.farmMessage,
       },
       freeGames: { autoClaim: a.autoClaimFree, claimed: a.claimedFree, skipped: a.skippedFree },
+      sellJob: this.sellJob,
       unlocker: a.unlocker
         ? {
             appid: a.unlocker.appid,
