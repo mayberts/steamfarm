@@ -361,7 +361,14 @@ async function updateFreeGames(acc) {
         el('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.name),
         claimed.has(p.key)
           ? el('span', { class: 'pill' }, 'In library')
-          : el('button', { disabled: acc.status !== 'online', onclick: () => claimFree(p.key) }, 'Claim'),
+          : acc.freeGames.skipped[p.key]
+            ? el('button', {
+                class: 'secondary',
+                title: 'DLC for a game this account does not own. Click to try again.',
+                disabled: acc.status !== 'online',
+                onclick: () => claimFree(p.key),
+              }, acc.freeGames.skipped[p.key])
+            : el('button', { disabled: acc.status !== 'online', onclick: () => claimFree(p.key) }, 'Claim'),
       ),
     ),
   );

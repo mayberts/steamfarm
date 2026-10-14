@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import Schema from 'steam-user/protobufs/generated/_load.js';
 import { parseSchema } from '../achievements';
 import { describeBadgePage, fetchBadgeGames, parseBadgePage } from '../badges';
-import { parseFreeSearch } from '../freegames';
+import { parseFreeSearch, pickFreePackage } from '../freegames';
 
 test('parseBadgePage finds games with drops, names, hours and pages', () => {
   const html = `
@@ -234,4 +234,16 @@ test('parseFreeSearch keeps only 100%-off apps and packages', () => {
     { key: 'sub/9001', appid: 111, packageid: 9001, name: 'Free & Fun', url: 'https://store.steampowered.com/app/1/X/' },
     { key: 'app/222', appid: 222, packageid: undefined, name: 'Old Markup', url: 'https://store.steampowered.com/app/1/X/' },
   ]);
+});
+
+test('pickFreePackage prefers the package currently priced at zero', () => {
+  assert.equal(
+    pickFreePackage({
+      packages: [100, 200],
+      package_groups: [{ subs: [{ packageid: 100, price_in_cents_with_discount: 999 }, { packageid: 200, price_in_cents_with_discount: 0 }] }],
+    }),
+    200,
+  );
+  assert.equal(pickFreePackage({ packages: [300] }), 300);
+  assert.equal(pickFreePackage(null), undefined);
 });

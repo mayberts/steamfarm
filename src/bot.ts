@@ -5,6 +5,7 @@ import { config } from './config';
 import { Logger } from './log';
 import { AccountRecord, FreePromo, PersonaStateName, store } from './store';
 import { DropInfo, fetchBadgeGames } from './badges';
+import { fetchAppDetails, pickFreePackage } from './freegames';
 import { getGlobalPercentages, getUserStats, setAchievements, UserStats } from './achievements';
 
 export type BotStatus = 'stopped' | 'connecting' | 'awaiting_guard' | 'online' | 'error';
@@ -392,19 +393,32 @@ export class Bot {
   /** Claim one free promotion. Returns false when the account already owns it. */
   async claimFree(promo: FreePromo): Promise<boolean> {
     const client = this.requireOnline();
+    let packageid = promo.packageid;
     if (promo.appid) {
       const owned = await this.getOwnedGames();
       if (owned.some((g) => g.appid === promo.appid)) {
         this.markClaimed(promo.key);
         return false;
       }
+      const details = await fetchAppDetails(promo.appid);
+      // DLC can only be added to an account that owns the game it belongs to.
+      const baseAppid = Number(details?.fullgame?.appid);
+      if (details?.type === 'dlc' && baseAppid && !owned.some((g) => g.appid === baseAppid)) {
+        const reason = `Needs ${details.fullgame?.name ?? `app ${baseAppid}`}`;
+        this.account.skippedFree[promo.key] = reason;
+        store.save();
+        throw new Error(`${reason}, which this account doesn't own`);
+      }
+      // Search results often leave out the package (always for DLC); the store page knows it.
+      packageid ??= pickFreePackage(details);
     }
-    if (promo.packageid) {
-      await this.addFreeLicense(promo.packageid);
+    if (packageid) {
+      await this.addFreeLicense(packageid);
     } else {
       const res = await client.requestFreeLicense([promo.appid]);
       if (!res.grantedAppIds?.length && !res.grantedPackageIds?.length) throw new Error('Steam did not grant a license');
     }
+    delete this.account.skippedFree[promo.key];
     this.markClaimed(promo.key);
     this.ownedGamesAt = 0;
     this.log.info(`Claimed free game: ${promo.name}`);
@@ -415,7 +429,7 @@ export class Bot {
   async autoClaimFree(promos: FreePromo[]): Promise<void> {
     if (!this.account.autoClaimFree || this.status !== 'online') return;
     for (const promo of promos) {
-      if (this.account.claimedFree.includes(promo.key)) continue;
+      if (this.account.claimedFree.includes(promo.key) || this.account.skippedFree[promo.key]) continue;
       try {
         await this.claimFree(promo);
       } catch (err) {
@@ -578,7 +592,7 @@ export class Bot {
         lastCheck: this.farmLastCheck,
         message: this.farmMessage,
       },
-      freeGames: { autoClaim: a.autoClaimFree, claimed: a.claimedFree },
+      freeGames: { autoClaim: a.autoClaimFree, claimed: a.claimedFree, skipped: a.skippedFree },
       unlocker: a.unlocker
         ? { appid: a.unlocker.appid, remaining: a.unlocker.queue.length, nextAt: a.unlocker.nextAt, idle: a.unlocker.idle }
         : null,
