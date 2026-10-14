@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Steamfarm</title>
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -22,6 +23,16 @@
       <span class="brand">Steamfarm</span>
       <nav id="account-tabs"></nav>
       <button id="add-account-btn" class="secondary">+ Add account</button>
+      <select id="theme-select" aria-label="Theme" title="Theme">
+        <option value="">System</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+        <option value="steam">Steam</option>
+        <option value="midnight">Midnight</option>
+        <option value="nord">Nord</option>
+        <option value="forest">Forest</option>
+        <option value="ember">Ember</option>
+      </select>
       <button id="logout-btn" class="link">Sign out</button>
     </header>
     <main id="main"></main>
