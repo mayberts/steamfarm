@@ -57,6 +57,36 @@ export async function fetchFreePromos(): Promise<FreePromo[]> {
   return parseFreeSearch(json.results_html);
 }
 
+export interface AppDetails {
+  type?: string;
+  name?: string;
+  fullgame?: { appid?: string | number; name?: string };
+  packages?: number[];
+  package_groups?: { subs?: { packageid: number; price_in_cents_with_discount?: number; is_free_license?: boolean }[] }[];
+}
+
+/** Store details for an app: its type, base game (for DLC) and packages. */
+export async function fetchAppDetails(appid: number): Promise<AppDetails | null> {
+  const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=us&l=english`, {
+    headers: { 'User-Agent': 'Mozilla/5.0 steamfarm' },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`Store app details returned HTTP ${res.status}`);
+  const json = (await res.json()) as Record<string, { success?: boolean; data?: AppDetails }>;
+  const entry = json[String(appid)];
+  return entry?.success ? (entry.data ?? null) : null;
+}
+
+/** The package an app is currently sold as for free, if any. Exported for tests. */
+export function pickFreePackage(details: AppDetails | null): number | undefined {
+  for (const group of details?.package_groups ?? []) {
+    for (const sub of group.subs ?? []) {
+      if (sub.price_in_cents_with_discount === 0 || sub.is_free_license) return Number(sub.packageid);
+    }
+  }
+  return details?.packages?.[0];
+}
+
 async function sendWebhook(url: string, promos: FreePromo[]): Promise<void> {
   const lines = promos.map((p) => `${p.name}: ${p.url}`);
   const text = `Free to keep on Steam:\n${lines.join('\n')}`;

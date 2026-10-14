@@ -49,6 +49,8 @@ export interface AccountRecord {
   autoClaimFree: boolean;
   /** Keys of free promotions already claimed (or found already owned) by this account. */
   claimedFree: string[];
+  /** Free promotions this account can't claim (e.g. DLC for a game it doesn't own), by key, with the reason. */
+  skippedFree: Record<string, string>;
 }
 
 export interface FreePromo {
@@ -88,6 +90,7 @@ export function defaultAccount(username: string): AccountRecord {
     farming: false,
     autoClaimFree: false,
     claimedFree: [],
+    skippedFree: {},
   };
 }
 
