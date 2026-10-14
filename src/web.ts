@@ -178,6 +178,10 @@ export function createServer() {
   }));
 
   api.get('/accounts/:name/games', h((req) => manager.get(param(req, 'name')).getOwnedGames(req.query.refresh === '1')));
+  api.put('/accounts/:name/favorites', h((req) => {
+    const appids = Array.isArray(req.body?.appids) ? req.body.appids.map(Number) : [];
+    manager.get(param(req, 'name')).setFavorites(appids);
+  }));
   api.put('/accounts/:name/idle', h((req) => {
     const appids = Array.isArray(req.body?.appids) ? req.body.appids.map(Number) : [];
     manager.get(param(req, 'name')).setIdleGames(appids);
