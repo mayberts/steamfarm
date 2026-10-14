@@ -13,6 +13,9 @@ services:
       # Set to "true" if you serve the UI over HTTPS through a reverse proxy.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TZ: ${TZ:-UTC}
+      # User and group that own the data volume. On Unraid use 99 and 100.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
     volumes:
       - steamfarm-data:/data
 

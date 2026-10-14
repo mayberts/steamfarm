@@ -15,8 +15,8 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY public ./public
-RUN mkdir -p /data && chown node:node /data
-USER node
+# Starts as root only to give /data to PUID:PGID, then drops privileges (see src/privileges.ts).
+RUN mkdir -p /data
 VOLUME ["/data"]
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

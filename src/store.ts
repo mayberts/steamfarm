@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config';
+import { appLog } from './log';
 
 export type PersonaStateName = 'online' | 'away' | 'invisible' | 'offline';
 
@@ -73,6 +74,16 @@ class Store {
 
   load(): void {
     fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+    try {
+      fs.accessSync(config.dataDir, fs.constants.W_OK);
+    } catch {
+      const uid = process.getuid?.() ?? '?';
+      const gid = process.getgid?.() ?? '?';
+      throw new Error(
+        `${config.dataDir} is not writable by uid ${uid} gid ${gid}. ` +
+          'Set PUID/PGID to the owner of the data folder (Unraid: PUID=99, PGID=100) or fix its permissions.',
+      );
+    }
     if (fs.existsSync(this.file)) {
       this.data = JSON.parse(fs.readFileSync(this.file, 'utf8')) as StoreFile;
       // Fill in fields added in newer versions.
@@ -110,7 +121,11 @@ class Store {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      this.flush();
+      try {
+        this.flush();
+      } catch (err) {
+        appLog.error(`Could not save ${this.file}: ${(err as Error).message}`);
+      }
     }, 250);
   }
 
