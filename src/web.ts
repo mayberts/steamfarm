@@ -170,7 +170,10 @@ export function createServer() {
   api.post('/accounts/:name/guard', h((req) => manager.get(param(req, 'name')).submitGuardCode(String(req.body?.code ?? ''))));
   api.put('/accounts/:name/settings', h((req) => {
     const bot = manager.get(param(req, 'name'));
+    const wasAutoClaim = bot.account.autoClaimFree;
     bot.updateSettings(req.body ?? {});
+    // Turning auto-claim on claims whatever is free right now instead of waiting for the next check.
+    if (!wasAutoClaim && bot.account.autoClaimFree) void bot.autoClaimFree(manager.freeGames.promos);
     return bot.snapshot();
   }));
 
@@ -201,6 +204,30 @@ export function createServer() {
     return { queued };
   }));
   api.delete('/accounts/:name/unlocker', h((req) => manager.get(param(req, 'name')).stopUnlocker()));
+
+  api.get('/free-games', h(() => {
+    const { enabled, intervalMin, webhookUrl } = store.freeGames();
+    const w = manager.freeGames;
+    return { settings: { enabled, intervalMin, webhookUrl }, promos: w.promos, lastCheck: w.lastCheck, message: w.message };
+  }));
+  api.put('/free-games/settings', h((req) => {
+    const settings = store.freeGames();
+    const { enabled, intervalMin, webhookUrl } = req.body ?? {};
+    const url = typeof webhookUrl === 'string' ? webhookUrl.trim() : undefined;
+    if (url && !/^https?:\/\//i.test(url)) throw Object.assign(new Error('Webhook URL must start with http:// or https://'), { status: 400 });
+    if (typeof enabled === 'boolean') settings.enabled = enabled;
+    if (Number.isFinite(Number(intervalMin))) settings.intervalMin = Math.min(1440, Math.max(15, Math.floor(Number(intervalMin))));
+    if (url !== undefined) settings.webhookUrl = url;
+    store.save();
+    manager.freeGames.reschedule();
+  }));
+  api.post('/free-games/check', h(() => manager.freeGames.check()));
+  api.post('/free-games/test-webhook', h(() => manager.freeGames.testWebhook()));
+  api.post('/accounts/:name/free-games/claim', h(async (req) => {
+    const promo = manager.freeGames.promos.find((p) => p.key === String(req.body?.key ?? ''));
+    if (!promo) throw Object.assign(new Error('That game is no longer free'), { status: 404 });
+    return { claimed: await manager.get(param(req, 'name')).claimFree(promo) };
+  }));
 
   app.use('/api', api);
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html', maxAge: '5m' }));

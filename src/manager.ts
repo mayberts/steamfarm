@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { EAuthTokenPlatformType, LoginSession } from 'steam-session';
 import { Bot } from './bot';
+import { FreeGameWatcher } from './freegames';
 import { appLog } from './log';
 import { defaultAccount, store } from './store';
 
@@ -17,6 +18,7 @@ interface QrLogin {
 
 class BotManager {
   private bots = new Map<string, Bot>();
+  readonly freeGames = new FreeGameWatcher(() => this.list());
   private qrLogins = new Map<string, QrLogin>();
 
   init(): void {
@@ -26,6 +28,7 @@ class BotManager {
       if (acc.autoStart && acc.refreshToken) bot.start();
     }
     appLog.info(`Loaded ${this.bots.size} account(s)`);
+    this.freeGames.start();
   }
 
   list(): Bot[] {

@@ -45,12 +45,35 @@ export interface AccountRecord {
   farm: FarmSettings;
   farming: boolean;
   unlocker?: UnlockerTask;
+  /** Claim free-to-keep promotions automatically. */
+  autoClaimFree: boolean;
+  /** Keys of free promotions already claimed (or found already owned) by this account. */
+  claimedFree: string[];
+}
+
+export interface FreePromo {
+  /** "sub/<id>" for a package, "app/<id>" for an app without a package. */
+  key: string;
+  appid?: number;
+  packageid?: number;
+  name: string;
+  url: string;
+}
+
+export interface FreeGamesSettings {
+  enabled: boolean;
+  intervalMin: number;
+  /** Discord webhook or any URL that accepts a POSTed text message (e.g. ntfy). */
+  webhookUrl: string;
+  /** Promotions already announced, so each is alerted once. */
+  seen: Record<string, FreePromo & { firstSeen: number }>;
 }
 
 interface StoreFile {
   version: 1;
   webPassword?: string;
   sessionSecret?: string;
+  freeGames?: FreeGamesSettings;
   accounts: Record<string, AccountRecord>;
 }
 
@@ -63,6 +86,8 @@ export function defaultAccount(username: string): AccountRecord {
     idleGames: [],
     farm: { maxConcurrent: 32, checkIntervalMin: 15, blacklist: [], autoStart: false },
     farming: false,
+    autoClaimFree: false,
+    claimedFree: [],
   };
 }
 
@@ -96,6 +121,11 @@ class Store {
 
   get raw(): StoreFile {
     return this.data;
+  }
+
+  freeGames(): FreeGamesSettings {
+    this.data.freeGames = { enabled: true, intervalMin: 60, webhookUrl: '', seen: {}, ...this.data.freeGames };
+    return this.data.freeGames;
   }
 
   accounts(): AccountRecord[] {
