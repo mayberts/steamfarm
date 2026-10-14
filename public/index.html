@@ -24,31 +24,62 @@
     </form>
   </div>
 
-  <div id="app-view" class="hidden">
-    <header>
-      <span class="brand"><img src="icons/icon.svg" alt="" width="24" height="24">Steamfarm</span>
-      <nav id="account-tabs"></nav>
-      <button id="add-account-btn" class="secondary">+ Add account</button>
-      <select id="theme-select" aria-label="Theme" title="Theme">
-        <option value="">System</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-        <option value="steam">Steam</option>
-        <option value="midnight">Midnight</option>
-        <option value="nord">Nord</option>
-        <option value="forest">Forest</option>
-        <option value="ember">Ember</option>
-      </select>
-      <button id="logout-btn" class="link">Sign out</button>
-    </header>
-    <main id="main"></main>
+  <div id="app-view" class="app hidden">
+    <aside id="sidebar" class="sidebar">
+      <a class="side-brand" href="#/games"><img src="icons/icon.svg" alt="" width="26" height="26">Steamfarm</a>
+      <nav class="side-nav">
+        <div class="nav-label">Games</div>
+        <a href="#/games" data-page="games"><span data-icon="gamepad"></span>Games</a>
+        <a href="#/idling" data-page="idling"><span data-icon="play"></span>Idling<span class="nav-count" id="nav-idling"></span></a>
+        <a href="#/favorites" data-page="favorites"><span data-icon="heart"></span>Favorites</a>
+        <a href="#/free" data-page="free"><span data-icon="gift" class="gold"></span>Free Games<span class="nav-count" id="nav-free"></span></a>
+        <div class="nav-label">Automation</div>
+        <a href="#/farming" data-page="farming"><span data-icon="cards"></span>Card Farming</a>
+        <a href="#/unlocker" data-page="unlocker"><span data-icon="trophy"></span>Achievement Unlocker</a>
+        <div class="nav-label">Misc</div>
+        <a href="#/activity" data-page="activity"><span data-icon="list"></span>Activity</a>
+        <a href="#/settings" data-page="settings"><span data-icon="cog"></span>Settings</a>
+      </nav>
+      <div class="side-account">
+        <button id="account-btn" class="account-btn" type="button" aria-haspopup="true"></button>
+        <div id="account-menu" class="account-menu hidden"></div>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim hidden"></div>
+
+    <div class="content">
+      <header class="topbar">
+        <button id="menu-btn" class="icon-btn mobile-only" type="button" aria-label="Menu"><span data-icon="menu"></span></button>
+        <label class="search">
+          <span data-icon="search"></span>
+          <input id="search" type="search" placeholder="Search games" autocomplete="off">
+        </label>
+        <div class="top-actions">
+          <select id="theme-select" aria-label="Theme" title="Theme">
+            <option value="">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="steam">Steam</option>
+            <option value="midnight">Midnight</option>
+            <option value="nord">Nord</option>
+            <option value="forest">Forest</option>
+            <option value="ember">Ember</option>
+          </select>
+          <button id="logout-btn" class="icon-btn" type="button" title="Sign out" aria-label="Sign out"><span data-icon="logout"></span></button>
+        </div>
+      </header>
+      <div id="banner"></div>
+      <main id="main"></main>
+    </div>
   </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <dialog id="add-dialog">
     <h2>Add Steam account</h2>
-    <div class="tabs-inline">
-      <button class="tab-btn active" data-pane="pw-pane">Username &amp; password</button>
-      <button class="tab-btn" data-pane="qr-pane">QR code</button>
+    <div class="tabs">
+      <button class="tab active" type="button" data-pane="pw-pane">Username &amp; password</button>
+      <button class="tab" type="button" data-pane="qr-pane">QR code</button>
     </div>
     <form id="pw-pane" class="pane">
       <input id="add-username" placeholder="Steam login name" autocomplete="off" required>
@@ -65,29 +96,6 @@
     </div>
     <p id="add-error" class="error"></p>
     <div class="row end"><button id="add-close" class="secondary" type="button">Close</button></div>
-  </dialog>
-
-  <dialog id="ach-dialog" class="wide">
-    <div class="row between">
-      <h2 id="ach-title">Achievements</h2>
-      <button id="ach-close" class="secondary" type="button">Close</button>
-    </div>
-    <div class="row wrap">
-      <input id="ach-filter" placeholder="Filter achievements">
-      <button id="ach-unlock-all" class="secondary" type="button">Unlock all</button>
-      <button id="ach-lock-all" class="secondary" type="button">Lock all</button>
-    </div>
-    <details class="unlocker">
-      <summary>Gradual unlocker (one at a time with random delays)</summary>
-      <div class="row wrap">
-        <label>Min delay (min) <input id="unl-min" type="number" min="1" value="5"></label>
-        <label>Max delay (min) <input id="unl-max" type="number" min="1" value="30"></label>
-        <label class="check"><input id="unl-idle" type="checkbox" checked> Idle the game while unlocking</label>
-        <button id="unl-start" type="button">Start unlocker</button>
-      </div>
-    </details>
-    <p id="ach-error" class="error"></p>
-    <div id="ach-list" class="ach-list"></div>
   </dialog>
 
   <script src="app.js"></script>

@@ -26,6 +26,8 @@ export interface UnlockerTask {
   idle: boolean;
   /** When the next unlock is due (epoch ms). */
   nextAt: number;
+  /** Queue length when the task started, for progress. */
+  total?: number;
 }
 
 export interface AccountRecord {
@@ -51,6 +53,8 @@ export interface AccountRecord {
   claimedFree: string[];
   /** Free promotions this account can't claim (e.g. DLC for a game it doesn't own), by key, with the reason. */
   skippedFree: Record<string, string>;
+  /** App IDs the user marked as favourite. */
+  favorites: number[];
 }
 
 export interface FreePromo {
@@ -91,6 +95,7 @@ export function defaultAccount(username: string): AccountRecord {
     autoClaimFree: false,
     claimedFree: [],
     skippedFree: {},
+    favorites: [],
   };
 }
 

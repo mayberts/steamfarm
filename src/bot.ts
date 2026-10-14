@@ -61,6 +61,8 @@ export class Bot {
   private webSessionAt = 0;
   private ownedGames: OwnedGame[] | null = null;
   private ownedGamesAt = 0;
+  /** When each app currently sent to Steam started being played (epoch ms). */
+  private idleSince = new Map<number, number>();
   private farmTimer: NodeJS.Timeout | null = null;
   private unlockTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -114,6 +116,7 @@ export class Bot {
 
   stop(message = 'Stopped'): void {
     this.clearReconnect();
+    this.idleSince.clear();
     this.stopFarmTimer();
     this.stopUnlockTimer();
     if (this.client) {
@@ -188,6 +191,7 @@ export class Bot {
       if (blocked === this.playingBlocked) return;
       this.playingBlocked = blocked;
       if (blocked) {
+        this.idleSince.clear();
         this.log.warn(`Paused: you are playing${app ? ` app ${app}` : ''} on another device`);
       } else {
         this.log.info('Other session stopped playing; resuming');
@@ -258,7 +262,28 @@ export class Bot {
   /** Push the current game list to Steam. */
   applyGames(): void {
     if (!this.client || this.status !== 'online' || this.playingBlocked) return;
-    this.client.gamesPlayed(this.currentGames());
+    const games = this.currentGames();
+    const now = Date.now();
+    const appids = new Set(games.filter((g): g is number => typeof g === 'number'));
+    for (const id of appids) if (!this.idleSince.has(id)) this.idleSince.set(id, now);
+    for (const id of [...this.idleSince.keys()]) if (!appids.has(id)) this.idleSince.delete(id);
+    this.client.gamesPlayed(games);
+  }
+
+  /** What is being played right now, and which feature asked for it. */
+  private idlingDetails() {
+    if (this.status !== 'online' || this.playingBlocked) return [];
+    const farming = new Set(this.account.farming ? this.farmGames.slice(0, this.account.farm.maxConcurrent).map((g) => g.appid) : []);
+    return this.playing.map((appid) => ({
+      appid,
+      source: this.account.unlocker?.idle && this.account.unlocker.appid === appid ? 'unlocker' : farming.has(appid) ? 'farming' : 'booster',
+      since: this.idleSince.get(appid) ?? Date.now(),
+    }));
+  }
+
+  setFavorites(appids: number[]): void {
+    this.account.favorites = [...new Set(appids.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 5000);
+    store.save();
   }
 
   setIdleGames(appids: number[]): void {
@@ -512,7 +537,15 @@ export class Bot {
     if (queue.length === 0) throw new Error('Nothing to unlock');
     const min = Math.max(1, Math.floor(minDelaySec));
     const max = Math.max(min, Math.floor(maxDelaySec));
-    this.account.unlocker = { appid, queue, minDelaySec: min, maxDelaySec: max, idle, nextAt: Date.now() + randomBetween(min, max) * 1000 };
+    this.account.unlocker = {
+      appid,
+      queue,
+      total: queue.length,
+      minDelaySec: min,
+      maxDelaySec: max,
+      idle,
+      nextAt: Date.now() + randomBetween(min, max) * 1000,
+    };
     store.save();
     this.log.info(`Achievement unlocker: ${queue.length} achievement(s) queued for app ${appid}`);
     this.applyGames();
@@ -579,6 +612,8 @@ export class Bot {
       hasSharedSecret: Boolean(a.sharedSecret),
       playingBlocked: this.playingBlocked,
       playing: this.status === 'online' ? this.playing : [],
+      idling: this.idlingDetails(),
+      favorites: a.favorites,
       settings: {
         autoStart: a.autoStart,
         personaState: a.personaState,
@@ -594,7 +629,13 @@ export class Bot {
       },
       freeGames: { autoClaim: a.autoClaimFree, claimed: a.claimedFree, skipped: a.skippedFree },
       unlocker: a.unlocker
-        ? { appid: a.unlocker.appid, remaining: a.unlocker.queue.length, nextAt: a.unlocker.nextAt, idle: a.unlocker.idle }
+        ? {
+            appid: a.unlocker.appid,
+            remaining: a.unlocker.queue.length,
+            total: a.unlocker.total ?? a.unlocker.queue.length,
+            nextAt: a.unlocker.nextAt,
+            idle: a.unlocker.idle,
+          }
         : null,
     };
   }
