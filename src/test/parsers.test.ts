@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Schema from 'steam-user/protobufs/generated/_load.js';
 import { parseSchema } from '../achievements';
-import { parseBadgePage } from '../badges';
+import { fetchCardDrops, parseBadgePage } from '../badges';
 
 test('parseBadgePage finds games with drops, names, hours and pages', () => {
   const html = `
@@ -80,4 +80,60 @@ test('user stats protobufs used by the achievement manager exist', () => {
   const back = Schema.CMsgClientStoreUserStats2.toObject(Schema.CMsgClientStoreUserStats2.decode(buf), { longs: String });
   assert.equal(back.settee_steam_id, '76561198000000000');
   assert.equal(back.stats[0].stat_value, 0xffffffff);
+});
+
+function badgeHtml(appid: number, drops: number, pages: number): string {
+  const links = Array.from({ length: pages }, (_, i) => `<a class="pagelink" href="?p=${i + 1}">${i + 1}</a>`).join('');
+  return `<script>g_steamID = "1";</script>
+    <div class="badge_row is_link"><a href="https://steamcommunity.com/id/me/gamecards/${appid}/"></a>
+    <div class="badge_title">Game ${appid}</div><span class="progress_info_bold">${drops} card drops remaining</span></div>${links}`;
+}
+
+async function withFetch(handler: (url: string) => Response, fn: () => Promise<void>): Promise<string[]> {
+  const original = globalThis.fetch;
+  const seen: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input instanceof Request ? input.url : input);
+    seen.push(url);
+    return handler(url);
+  }) as typeof fetch;
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = original;
+  }
+  return seen;
+}
+
+test('fetchCardDrops follows the custom-URL redirect and keeps paging there', async () => {
+  let drops: Awaited<ReturnType<typeof fetchCardDrops>> = [];
+  const seen = await withFetch(
+    (url) => {
+      if (url.includes('/profiles/')) {
+        // Steam drops the query string on this redirect.
+        return new Response(null, { status: 302, headers: { location: 'https://steamcommunity.com/id/me/badges/' } });
+      }
+      const page = new URL(url).searchParams.get('p') ?? '1';
+      return new Response(page === '1' ? badgeHtml(10, 2, 2) : badgeHtml(20, 1, 2));
+    },
+    async () => {
+      drops = await fetchCardDrops('765', ['steamLoginSecure=x']);
+    },
+  );
+  assert.deepEqual(drops.map((d) => d.appid).sort(), [10, 20]);
+  assert.deepEqual(seen, [
+    'https://steamcommunity.com/profiles/765/badges/?l=english&p=1',
+    'https://steamcommunity.com/id/me/badges/',
+    'https://steamcommunity.com/id/me/badges/?l=english&p=1',
+    'https://steamcommunity.com/id/me/badges/?l=english&p=2',
+  ]);
+});
+
+test('fetchCardDrops reports an expired session when sent to the login page', async () => {
+  await withFetch(
+    () => new Response(null, { status: 302, headers: { location: '/login/home/?goto=badges' } }),
+    async () => {
+      await assert.rejects(fetchCardDrops('765', []), /session expired/);
+    },
+  );
 });
