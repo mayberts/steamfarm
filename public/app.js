@@ -255,13 +255,13 @@ function updatePanels(acc) {
   $('#guard-form').classList.toggle('hidden', acc.status !== 'awaiting_guard');
 
   const running = acc.status !== 'stopped' && acc.status !== 'error';
-  $('#account-actions').replaceChildren(
+  $('#account-actions').replaceChildren(...[
     running
       ? el('button', { class: 'secondary', onclick: () => act('POST', 'stop') }, 'Log off')
       : el('button', { onclick: () => act('POST', 'start'), disabled: !acc.hasLogin }, 'Log in'),
     !acc.hasLogin ? el('button', { class: 'secondary', onclick: openAddDialog }, 'Re-authenticate') : null,
     el('button', { class: 'danger', onclick: removeAccount }, 'Remove'),
-  );
+  ].filter(Boolean));
 
   // Farming
   const f = acc.farming;

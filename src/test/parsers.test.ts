@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Schema from 'steam-user/protobufs/generated/_load.js';
 import { parseSchema } from '../achievements';
-import { fetchCardDrops, parseBadgePage } from '../badges';
+import { fetchBadgeGames, parseBadgePage } from '../badges';
 
 test('parseBadgePage finds games with drops, names, hours and pages', () => {
   const html = `
@@ -105,8 +105,8 @@ async function withFetch(handler: (url: string) => Response, fn: () => Promise<v
   return seen;
 }
 
-test('fetchCardDrops follows the custom-URL redirect and keeps paging there', async () => {
-  let drops: Awaited<ReturnType<typeof fetchCardDrops>> = [];
+test('fetchBadgeGames follows the custom-URL redirect and keeps paging there', async () => {
+  let drops: Awaited<ReturnType<typeof fetchBadgeGames>> = [];
   const seen = await withFetch(
     (url) => {
       if (url.includes('/profiles/')) {
@@ -117,7 +117,7 @@ test('fetchCardDrops follows the custom-URL redirect and keeps paging there', as
       return new Response(page === '1' ? badgeHtml(10, 2, 2) : badgeHtml(20, 1, 2));
     },
     async () => {
-      drops = await fetchCardDrops('765', ['steamLoginSecure=x']);
+      drops = await fetchBadgeGames('765', ['steamLoginSecure=x']);
     },
   );
   assert.deepEqual(drops.map((d) => d.appid).sort(), [10, 20]);
@@ -129,11 +129,11 @@ test('fetchCardDrops follows the custom-URL redirect and keeps paging there', as
   ]);
 });
 
-test('fetchCardDrops reports an expired session when sent to the login page', async () => {
+test('fetchBadgeGames reports an expired session when sent to the login page', async () => {
   await withFetch(
     () => new Response(null, { status: 302, headers: { location: '/login/home/?goto=badges' } }),
     async () => {
-      await assert.rejects(fetchCardDrops('765', []), /session expired/);
+      await assert.rejects(fetchBadgeGames('765', []), /session expired/);
     },
   );
 });

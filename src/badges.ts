@@ -78,8 +78,8 @@ async function getCommunityPage(url: string, headers: Record<string, string>): P
   throw new Error('Too many redirects loading the badge page');
 }
 
-/** Fetch every badge page and return the games that still have card drops. */
-export async function fetchCardDrops(steamId: string, cookies: string[]): Promise<DropInfo[]> {
+/** Fetch every badge page and return every game badge found, with its remaining card drops. */
+export async function fetchBadgeGames(steamId: string, cookies: string[]): Promise<DropInfo[]> {
   const headers = { Cookie: cookies.join('; '), 'User-Agent': 'Mozilla/5.0 steamfarm' };
   const all = new Map<number, DropInfo>();
   let profileBase = `https://${COMMUNITY_HOST}/profiles/${steamId}`;
@@ -99,5 +99,5 @@ export async function fetchCardDrops(steamId: string, cookies: string[]): Promis
     totalPages = parsed.totalPages;
     for (const g of parsed.games) all.set(g.appid, g);
   }
-  return [...all.values()].filter((g) => g.dropsRemaining > 0);
+  return [...all.values()];
 }
