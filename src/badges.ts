@@ -22,32 +22,65 @@ function decodeEntities(s: string): string {
     .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
 }
 
+// Opening tag of a badge row: the outer `badge_row` or the `badge_row_inner` that holds the stats.
+const ROW_START = /<div\b[^>]*\bclass="(?:[^"]*\s)?badge_row(?:_inner)?(?:\s[^"]*)?"[^>]*>/;
+
+function textOf(html: string, className: string): string | undefined {
+  const m = html.match(new RegExp(`class="${className}"[^>]*>([\\s\\S]*?)<`));
+  return m ? decodeEntities(m[1]).replace(/\s+/g, ' ').trim() : undefined;
+}
+
 /** Parse one page of steamcommunity.com/profiles/<id>/badges (English). Exported for tests. */
 export function parseBadgePage(html: string): BadgePage {
-  // A logged-in badge page always has the user's own "badges" tab and the
-  // owner-only drop counters; the anonymous view has neither.
+  // The anonymous view sets g_steamID to false.
   const loggedIn = !/g_steamID\s*=\s*false/.test(html);
-  const games: DropInfo[] = [];
+  const byApp = new Map<number, DropInfo>();
 
-  for (const row of html.split(/<div class="badge_row[ "]/).slice(1)) {
-    const appMatch = row.match(/\/gamecards\/(\d+)\//);
+  for (const row of html.split(ROW_START).slice(1)) {
+    // Only rows with stats are game badges; the outer row may just hold the overlay link.
+    if (!/badge_title_stats|progress_info_bold/.test(row)) continue;
+    const appMatch = row.match(/card_drop_info_gamebadge_(\d+)_/) ?? row.match(/\/gamecards\/(\d+)/);
     if (!appMatch) continue;
-    const dropsMatch = row.match(/(\d+) card drops? remaining/i);
-    const dropsRemaining = dropsMatch ? Number(dropsMatch[1]) : 0;
-    const titleMatch = row.match(/<div class="badge_title">\s*([\s\S]*?)(?:<span|<\/div>)/);
-    const hoursMatch = row.match(/([\d,.]+) hrs on record/);
-    games.push({
-      appid: Number(appMatch[1]),
-      name: titleMatch ? decodeEntities(titleMatch[1]).trim() : `App ${appMatch[1]}`,
-      dropsRemaining,
-      hoursPlayed: hoursMatch ? Number(hoursMatch[1].replace(/,/g, '')) : 0,
+    const appid = Number(appMatch[1]);
+
+    const progress = textOf(row, 'progress_info_bold') ?? '';
+    const drops = /card drop/i.test(progress) ? Number(progress.match(/\d+/)?.[0] ?? 0) : 0;
+    const hours = (textOf(row, 'badge_title_stats_playtime') ?? '').match(/[\d,]+(?:\.\d+)?/);
+    const title = textOf(row, 'badge_title');
+
+    const prev = byApp.get(appid);
+    byApp.set(appid, {
+      appid,
+      name: title || prev?.name || `App ${appid}`,
+      dropsRemaining: Math.max(drops, prev?.dropsRemaining ?? 0),
+      hoursPlayed: hours ? Number(hours[0].replace(/,/g, '')) : (prev?.hoursPlayed ?? 0),
     });
   }
 
   let totalPages = 1;
   for (const m of html.matchAll(/class="pagelink"[^>]*>(\d+)</g)) totalPages = Math.max(totalPages, Number(m[1]));
 
-  return { games, totalPages, loggedIn };
+  return { games: [...byApp.values()], totalPages, loggedIn };
+}
+
+/**
+ * A short, secret-free summary of a badge page for the log, used when no badges
+ * could be read so the cause can be diagnosed without the page itself.
+ */
+export function describeBadgePage(html: string): string {
+  const count = (re: RegExp) => (html.match(re) ?? []).length;
+  const title = html.match(/<title>([^<]*)<\/title>/)?.[1]?.trim() ?? 'none';
+  const steamId = /g_steamID\s*=\s*"\d+"/.test(html) ? 'set' : /g_steamID\s*=\s*false/.test(html) ? 'false' : 'missing';
+  return [
+    `title "${decodeEntities(title)}"`,
+    `${html.length} bytes`,
+    `g_steamID ${steamId}`,
+    `badge_row ${count(/\bbadge_row\b/g)}`,
+    `badge_row_inner ${count(/badge_row_inner/g)}`,
+    `card_drop_info ${count(/card_drop_info_gamebadge_/g)}`,
+    `gamecards links ${count(/\/gamecards\//g)}`,
+    `progress_info_bold ${count(/progress_info_bold/g)}`,
+  ].join(', ');
 }
 
 const COMMUNITY_HOST = 'steamcommunity.com';
@@ -96,6 +129,9 @@ export async function fetchBadgeGames(steamId: string, cookies: string[]): Promi
     }
     const parsed = parseBadgePage(res.html);
     if (!parsed.loggedIn) throw new Error('Steam web session expired');
+    if (page === 1 && parsed.games.length === 0) {
+      throw new Error(`Could not read any game badges from your badge page (${describeBadgePage(res.html)})`);
+    }
     totalPages = parsed.totalPages;
     for (const g of parsed.games) all.set(g.appid, g);
   }

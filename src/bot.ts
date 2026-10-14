@@ -369,11 +369,8 @@ export class Bot {
       this.farmLastCheck = Date.now();
       const total = this.farmGames.reduce((n, g) => n + g.dropsRemaining, 0);
       if (this.farmGames.length === 0) {
-        // Zero badges almost always means the page could not be read, not that farming is done.
-        this.farmMessage = badges.length
-          ? `No card drops remaining (checked ${badges.length} game badge(s))`
-          : 'No game badges found on your badge page. If you own games with trading cards, Steam may have changed the page';
-        this.log[badges.length ? 'info' : 'warn'](`Card farming finished: ${this.farmMessage}`);
+        this.farmMessage = `No card drops remaining (checked ${badges.length} game badge(s))`;
+        this.log.info(`Card farming finished: ${this.farmMessage}`);
         this.stopFarming();
         return;
       }

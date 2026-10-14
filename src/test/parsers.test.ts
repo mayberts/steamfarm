@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Schema from 'steam-user/protobufs/generated/_load.js';
 import { parseSchema } from '../achievements';
-import { fetchBadgeGames, parseBadgePage } from '../badges';
+import { describeBadgePage, fetchBadgeGames, parseBadgePage } from '../badges';
 
 test('parseBadgePage finds games with drops, names, hours and pages', () => {
   const html = `
@@ -29,6 +29,55 @@ test('parseBadgePage finds games with drops, names, hours and pages', () => {
     { appid: 440, name: 'Team Fortress 2', dropsRemaining: 3, hoursPlayed: 1234.5 },
     { appid: 730, name: 'Counter-Strike 2 & Friends', dropsRemaining: 0, hoursPlayed: 0 },
   ]);
+});
+
+test('parseBadgePage reads the badge_row_inner layout with card_drop_info ids', () => {
+  const html = `
+    <script>g_steamID = "76561198000000000";</script>
+    <div class="badge_row is_link">
+      <a class="badge_row_overlay" href="https://steamcommunity.com/id/me/gamecards/570"></a>
+      <div class="badge_row_inner">
+        <div class="badge_title_row">
+          <div class="badge_title">
+            Dota&nbsp;2&nbsp;<span class="badge_view_details">View details</span>
+          </div>
+        </div>
+        <div class="badge_title_stats">
+          <div class="badge_title_stats_content">
+            <div class="badge_title_stats_playtime">&nbsp;12.5 hrs on record</div>
+            <div class="badge_title_stats_drops">
+              <span class="progress_info_bold">2 card drops remaining</span>
+              <div class="card_drop_info_dialog" id="card_drop_info_gamebadge_570_1_0" style="display: none;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="badge_row is_link">
+      <a class="badge_row_overlay" href="https://steamcommunity.com/id/me/gamecards/730"></a>
+      <div class="badge_row_inner">
+        <div class="badge_title">Counter-Strike 2</div>
+        <div class="badge_title_stats_content">
+          <span class="progress_info_bold">No card drops remaining</span>
+          <div class="card_drop_info_dialog" id="card_drop_info_gamebadge_730_1_0"></div>
+        </div>
+      </div>
+    </div>
+    <div class="badge_row is_link">
+      <a class="badge_row_overlay" href="https://steamcommunity.com/id/me/badges/13"></a>
+      <div class="badge_row_inner"><div class="badge_title">Years of Service</div></div>
+    </div>`;
+  assert.deepEqual(parseBadgePage(html).games, [
+    { appid: 570, name: 'Dota 2', dropsRemaining: 2, hoursPlayed: 12.5 },
+    { appid: 730, name: 'Counter-Strike 2', dropsRemaining: 0, hoursPlayed: 0 },
+  ]);
+});
+
+test('describeBadgePage summarises the page without its contents', () => {
+  const summary = describeBadgePage('<title>Steam Community :: me :: Badges</title><script>g_steamID = "1"; g_sessionID = "secret";</script>');
+  assert.match(summary, /title "Steam Community :: me :: Badges"/);
+  assert.match(summary, /g_steamID set/);
+  assert.doesNotMatch(summary, /secret/);
 });
 
 test('parseBadgePage detects a logged-out page', () => {
