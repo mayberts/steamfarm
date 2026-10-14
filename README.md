@@ -34,7 +34,7 @@ Or just pull the image:
 ```sh
 docker pull ghcr.io/mayberts/steamfarm:latest
 docker run -d --name steamfarm -p 8080:8080 -e WEB_PASSWORD=change-me \
-  -v steamfarm-data:/data --restart unless-stopped ghcr.io/mayberts/steamfarm:latest
+  -e PUID=1000 -e PGID=1000 -v steamfarm-data:/data --restart unless-stopped ghcr.io/mayberts/steamfarm:latest
 ```
 
 ### Build from source
@@ -53,6 +53,11 @@ docker compose up -d --build
 | `PORT`          | `8080`   | Port the web UI listens on inside the container. |
 | `DATA_DIR`      | `/data`  | Where state is kept. Mount a volume here. |
 | `TZ`            | `UTC`    | Time zone for log timestamps. |
+| `PUID` / `PGID` | `1000`   | User and group that own the data folder. The container gives `/data` to them at startup and runs as them. |
+
+### Unraid
+
+Map `/data` to a folder such as `/mnt/user/appdata/steamfarm`, and set `PUID=99` and `PGID=100` so files are owned by `nobody:users` like your other appdata.
 
 Everything else (accounts, idle lists, farming options) is configured in the UI and saved to `/data/steamfarm.json`.
 
