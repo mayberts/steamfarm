@@ -180,7 +180,9 @@ header {
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.brand { font-weight: 700; font-size: 16px; margin-right: 8px; }
+.brand { font-weight: 700; font-size: 16px; margin-right: 8px; display: inline-flex; align-items: center; gap: 8px; }
+.login-logo { display: block; margin: 0 auto 4px; }
+.login-logo + h1 { text-align: center; }
 #account-tabs { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; min-width: 0; }
 #account-tabs button {
   background: none;

@@ -1,3 +1,5 @@
+<p align="center"><img src="public/icons/icon.svg" alt="" width="96" height="96"></p>
+
 # Steamfarm
 
 A self-hosted Steam idler you run with Docker and control from your browser. Every feature is free. There are no ads, accounts, telemetry or paid tiers.
