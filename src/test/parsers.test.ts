@@ -115,6 +115,36 @@ test('parseSchema maps bitfield stats to achievements and unlock state', () => {
   assert.equal(res.bitfields.get(1), 0b10);
 });
 
+test('parseSchema prefers reported stat values and links progress stats', () => {
+  const schema = {
+    '480': {
+      stats: {
+        '7': { type: 'INT', name: 'GAMES_WON', permission: '0' },
+        '9': { type: '1', name: 'SERVER_ONLY', permission: '2' },
+        '3': {
+          type: 'ACHIEVEMENTS',
+          // A misleading `bit` field: the key is the bit number.
+          bits: {
+            '0': { name: 'ACH_A', bit: 5, display: { name: 'A' } },
+            '1': { name: 'ACH_WIN_10', display: { name: 'Win 10' }, progress: { value: { operation: 'statvalue', operand1: 'GAMES_WON' }, min_val: '0', max_val: '10' } },
+            '2': { name: 'ACH_SERVER', display: { name: 'Server' }, progress: { value: { operand1: 'SERVER_ONLY' }, max_val: '1' } },
+          },
+        },
+      },
+    },
+  };
+  // The blocks say nothing is unlocked, but the reported stat value has bit 0 set.
+  const res = parseSchema(480, schema, [{ achievement_id: 3, unlock_time: [] }], [{ stat_id: 3, stat_value: 1 }]);
+  const [a, win, server] = res.achievements;
+  assert.equal(a.bit, 0);
+  assert.equal(a.statId, 3);
+  assert.equal(a.unlocked, true);
+  assert.equal(res.bitfields.get(3), 1);
+  assert.deepEqual(win.dependency, { statId: 7, value: 10 });
+  assert.equal(win.protected, false);
+  assert.equal(server.protected, true);
+});
+
 test('user stats protobufs used by the achievement manager exist', () => {
   for (const name of ['CMsgClientGetUserStats', 'CMsgClientGetUserStatsResponse', 'CMsgClientStoreUserStats2', 'CMsgClientStoreUserStatsResponse']) {
     assert.ok(Schema[name], `${name} missing`);

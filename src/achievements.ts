@@ -25,6 +25,8 @@ export interface Achievement {
   percent?: number;
   statId: number;
   bit: number;
+  /** Integer stat that tracks progress towards this achievement; Steam requires it to be sent with the unlock. */
+  dependency?: { statId: number; value: number };
 }
 
 export interface UserStats {
@@ -78,21 +80,44 @@ function localized(value: unknown): string {
 }
 
 const ACHIEVEMENT_STAT_TYPES = new Set(['4', '5', 'ACHIEVEMENTS', 'GROUPACHIEVEMENTS']);
+const INT_STAT_TYPES = new Set(['1', 'INT']);
 
 interface AchievementBlock {
   achievement_id: number;
   unlock_time: number[];
 }
 
+interface StatValue {
+  stat_id: number;
+  stat_value: number;
+}
+
 /**
- * Turn the binary KeyValues stats schema plus the user's unlock blocks into a
- * flat achievement list. Exported for tests.
+ * Turn the binary KeyValues stats schema plus the user's stat values and
+ * unlock blocks into a flat achievement list. Stat and bit numbers are the
+ * schema's keys, and the current state comes from the stat values Steam
+ * returned, since that is what gets written back. Exported for tests.
  */
-export function parseSchema(appid: number, schema: any, blocks: AchievementBlock[]): Omit<UserStats, 'crcStats'> {
+export function parseSchema(
+  appid: number,
+  schema: any,
+  blocks: AchievementBlock[],
+  statValues: StatValue[] = [],
+): Omit<UserStats, 'crcStats'> {
   const root = schema?.[String(appid)] ?? Object.values(schema ?? {})[0];
-  const stats = root?.stats ?? {};
+  const stats: Record<string, any> = root?.stats ?? {};
   const unlockTimes = new Map<number, number[]>();
   for (const block of blocks) unlockTimes.set(Number(block.achievement_id), block.unlock_time ?? []);
+  const values = new Map<number, number>();
+  for (const v of statValues) values.set(Number(v.stat_id), Number(v.stat_value) >>> 0);
+
+  // Integer stats by name, for achievements whose progress is tracked by one.
+  const intStats = new Map<string, { id: number; restricted: boolean }>();
+  for (const [statKey, stat] of Object.entries<any>(stats)) {
+    if (!INT_STAT_TYPES.has(String(stat?.type ?? ''))) continue;
+    const id = Number(statKey);
+    if (Number.isInteger(id) && stat?.name) intStats.set(String(stat.name), { id, restricted: Number(stat.permission ?? 0) > 1 });
+  }
 
   const achievements: Achievement[] = [];
   const bitfields = new Map<number, number>();
@@ -100,30 +125,42 @@ export function parseSchema(appid: number, schema: any, blocks: AchievementBlock
 
   for (const [statKey, stat] of Object.entries<any>(stats)) {
     if (!ACHIEVEMENT_STAT_TYPES.has(String(stat?.type ?? stat?.type_int ?? ''))) continue;
-    const statId = Number(stat.id ?? statKey);
+    const statId = Number(statKey);
+    if (!Number.isInteger(statId)) continue;
     const times = unlockTimes.get(statId) ?? [];
-    let value = 0;
+    // Prefer the stat value Steam reported; rebuild it from unlock times only if it is missing.
+    let value = values.get(statId);
+    if (value === undefined) {
+      value = 0;
+      times.forEach((t, bit) => {
+        if (Number(t) > 0 && bit < 32) value! |= 1 << bit;
+      });
+      value >>>= 0;
+    }
+    bitfields.set(statId, value);
+
     for (const [bitKey, bitDef] of Object.entries<any>(stat.bits ?? {})) {
-      const bit = Number(bitDef?.bit ?? bitKey);
+      const bit = Number(bitKey);
       if (!Number.isInteger(bit) || bit < 0 || bit > 31) continue;
-      const unlockTime = Number(times[bit] ?? 0);
-      if (unlockTime > 0) value |= 1 << bit;
-      const display = bitDef.display ?? {};
+      const display = bitDef?.display ?? {};
+      const progressStat = bitDef?.progress?.value?.operand1;
+      const progressMax = Number(bitDef?.progress?.max_val);
+      const dep = progressStat ? intStats.get(String(progressStat)) : undefined;
       achievements.push({
-        name: String(bitDef.name ?? `${statId}_${bit}`),
-        displayName: localized(display.name) || String(bitDef.name ?? ''),
+        name: String(bitDef?.name ?? `${statId}_${bit}`),
+        displayName: localized(display.name) || String(bitDef?.name ?? ''),
         description: localized(display.desc),
         hidden: String(display.hidden ?? '0') === '1',
-        unlocked: unlockTime > 0,
-        unlockTime,
-        protected: Number(bitDef.permission ?? 0) >= 2,
+        unlocked: (value & (1 << bit)) !== 0,
+        unlockTime: Number(times[bit] ?? 0),
+        protected: Number(bitDef?.permission ?? 0) > 0 || Boolean(dep?.restricted),
         icon: display.icon ? iconBase + display.icon : '',
         iconGray: display.icon_gray ? iconBase + display.icon_gray : '',
         statId,
         bit,
+        ...(dep && Number.isFinite(progressMax) ? { dependency: { statId: dep.id, value: progressMax } } : {}),
       });
     }
-    bitfields.set(statId, value >>> 0);
   }
 
   return { appid, achievements, bitfields };
@@ -143,7 +180,7 @@ export async function getUserStats(client: SteamClientLike, appid: number): Prom
     return { appid, crcStats: res.crc_stats, achievements: [], bitfields: new Map() };
   }
   const schema = BinaryKVParser.parse(res.schema);
-  const parsed = parseSchema(appid, schema, res.achievement_blocks ?? []);
+  const parsed = parseSchema(appid, schema, res.achievement_blocks ?? [], res.stats ?? []);
   return { ...parsed, crcStats: res.crc_stats };
 }
 
@@ -161,6 +198,7 @@ export async function setAchievements(
   const bitfields = new Map(current.bitfields);
   const changed: string[] = [];
   const touched = new Set<number>();
+  const dependencies = new Map<number, number>();
 
   for (const ach of current.achievements) {
     if (!(ach.name in changes) || changes[ach.name] === ach.unlocked) continue;
@@ -169,6 +207,10 @@ export async function setAchievements(
     value = changes[ach.name] ? value | (1 << ach.bit) : value & ~(1 << ach.bit);
     bitfields.set(ach.statId, value >>> 0);
     touched.add(ach.statId);
+    // Steam rejects an unlock whose progress stat has not reached its target, so send that too.
+    if (ach.dependency && !dependencies.has(ach.dependency.statId)) {
+      dependencies.set(ach.dependency.statId, changes[ach.name] ? ach.dependency.value : 0);
+    }
     changed.push(ach.name);
   }
   if (changed.length === 0) return [];
@@ -184,7 +226,10 @@ export async function setAchievements(
       settee_steam_id: steamId,
       crc_stats: current.crcStats,
       explicit_reset: false,
-      stats: [...touched].map((id) => ({ stat_id: id, stat_value: bitfields.get(id) })),
+      stats: [
+        ...[...touched].map((id) => ({ stat_id: id, stat_value: bitfields.get(id) })),
+        ...[...dependencies].map(([id, value]) => ({ stat_id: id, stat_value: value })),
+      ],
     },
     'CMsgClientStoreUserStatsResponse',
   );
