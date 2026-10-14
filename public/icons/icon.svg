@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Steamfarm</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22405c"/>
+      <stop offset="1" stop-color="#171d27"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8fd6ff"/>
+      <stop offset="1" stop-color="#3fa4e6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Steam rising from the sprout -->
+  <path d="M256 196c-26-24-26-50 0-74s26-50 0-74" fill="none" stroke="#c7e6fb" stroke-width="22" stroke-linecap="round" opacity=".55"/>
+  <!-- Ground -->
+  <path d="M146 404h220" stroke="#66c0f4" stroke-width="26" stroke-linecap="round" opacity=".45"/>
+  <!-- Stem -->
+  <path d="M256 392V262" stroke="#5bb6ee" stroke-width="30" stroke-linecap="round"/>
+  <!-- Leaves -->
+  <path d="M250 300c-6-62-52-96-122-94 2 70 44 108 122 94z" fill="url(#leaf)"/>
+  <path d="M262 278c4-66 50-104 126-104-2 76-48 116-126 104z" fill="url(#leaf)"/>
+</svg>

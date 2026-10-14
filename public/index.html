@@ -4,12 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Steamfarm</title>
+  <link rel="icon" href="favicon.ico" sizes="48x48">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <meta name="theme-color" content="#1b2838">
   <script src="theme.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="login-view" class="center hidden">
     <form id="login-form" class="card narrow">
+      <img class="login-logo" src="icons/icon.svg" alt="" width="64" height="64">
       <h1>Steamfarm</h1>
       <p class="muted">Enter the web UI password (<code>WEB_PASSWORD</code>).</p>
       <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" required>
@@ -20,7 +26,7 @@
 
   <div id="app-view" class="hidden">
     <header>
-      <span class="brand">Steamfarm</span>
+      <span class="brand"><img src="icons/icon.svg" alt="" width="24" height="24">Steamfarm</span>
       <nav id="account-tabs"></nav>
       <button id="add-account-btn" class="secondary">+ Add account</button>
       <select id="theme-select" aria-label="Theme" title="Theme">
