@@ -3,7 +3,7 @@ import SteamUser from 'steam-user';
 import SteamTotp from 'steam-totp';
 import { config } from './config';
 import { Logger } from './log';
-import { AccountRecord, PersonaStateName, store } from './store';
+import { AccountRecord, FreePromo, PersonaStateName, store } from './store';
 import { DropInfo, fetchBadgeGames } from './badges';
 import { getGlobalPercentages, getUserStats, setAchievements, UserStats } from './achievements';
 
@@ -268,12 +268,13 @@ export class Bot {
     this.applyGames();
   }
 
-  updateSettings(patch: Partial<Pick<AccountRecord, 'personaState' | 'customStatus' | 'autoStart' | 'sharedSecret'>> & {
+  updateSettings(patch: Partial<Pick<AccountRecord, 'personaState' | 'customStatus' | 'autoStart' | 'sharedSecret' | 'autoClaimFree'>> & {
     farm?: Partial<AccountRecord['farm']>;
   }): void {
     if (patch.personaState && patch.personaState in PERSONA_STATES) this.account.personaState = patch.personaState;
     if (typeof patch.customStatus === 'string') this.account.customStatus = patch.customStatus.slice(0, 64);
     if (typeof patch.autoStart === 'boolean') this.account.autoStart = patch.autoStart;
+    if (typeof patch.autoClaimFree === 'boolean') this.account.autoClaimFree = patch.autoClaimFree;
     if (typeof patch.sharedSecret === 'string') {
       if (patch.sharedSecret.trim()) this.account.sharedSecret = patch.sharedSecret.trim();
       else delete this.account.sharedSecret;
@@ -386,6 +387,88 @@ export class Bot {
     }
   }
 
+  // -------------------------------------------------------------- free games
+
+  /** Claim one free promotion. Returns false when the account already owns it. */
+  async claimFree(promo: FreePromo): Promise<boolean> {
+    const client = this.requireOnline();
+    if (promo.appid) {
+      const owned = await this.getOwnedGames();
+      if (owned.some((g) => g.appid === promo.appid)) {
+        this.markClaimed(promo.key);
+        return false;
+      }
+    }
+    if (promo.packageid) {
+      await this.addFreeLicense(promo.packageid);
+    } else {
+      const res = await client.requestFreeLicense([promo.appid]);
+      if (!res.grantedAppIds?.length && !res.grantedPackageIds?.length) throw new Error('Steam did not grant a license');
+    }
+    this.markClaimed(promo.key);
+    this.ownedGamesAt = 0;
+    this.log.info(`Claimed free game: ${promo.name}`);
+    return true;
+  }
+
+  /** Called by the free game watcher with everything currently free. */
+  async autoClaimFree(promos: FreePromo[]): Promise<void> {
+    if (!this.account.autoClaimFree || this.status !== 'online') return;
+    for (const promo of promos) {
+      if (this.account.claimedFree.includes(promo.key)) continue;
+      try {
+        await this.claimFree(promo);
+      } catch (err) {
+        this.log.warn(`Could not claim ${promo.name}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  private markClaimed(key: string): void {
+    if (!this.account.claimedFree.includes(key)) {
+      this.account.claimedFree.push(key);
+      // Promotions don't come back with the same package often; keep the list bounded.
+      if (this.account.claimedFree.length > 2000) this.account.claimedFree.splice(0, this.account.claimedFree.length - 2000);
+      store.save();
+    }
+  }
+
+  /** The store's "Add to Account" for free packages. */
+  private async addFreeLicense(packageid: number): Promise<void> {
+    const cookies = await this.ensureWebSession();
+    const sessionid = cookies.find((c) => c.startsWith('sessionid='))?.slice('sessionid='.length);
+    if (!sessionid) throw new Error('Steam web session has no sessionid');
+    const res = await fetch(`https://store.steampowered.com/freelicense/addfreelicense/${packageid}`, {
+      method: 'POST',
+      headers: {
+        Cookie: cookies.join('; '),
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'User-Agent': 'Mozilla/5.0 steamfarm',
+        Origin: 'https://store.steampowered.com',
+        Referer: 'https://store.steampowered.com/',
+      },
+      body: new URLSearchParams({ ajax: 'true', sessionid }).toString(),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (res.status >= 300 && res.status < 400) throw new Error('Steam store session expired');
+    if (res.status === 401 || res.status === 403) throw new Error(`Store refused the license (HTTP ${res.status})`);
+    if (!res.ok && res.status !== 500) throw new Error(`Store returned HTTP ${res.status}`);
+    // The body is inconsistent (array, object or null); only an object can carry an error.
+    let body: unknown = null;
+    try {
+      body = JSON.parse(await res.text());
+    } catch {
+      // Not JSON: nothing more to learn from it.
+    }
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const { purchaseresultdetail, error } = body as { purchaseresultdetail?: number; error?: string };
+      if (purchaseresultdetail) throw new Error(`Store refused the license (purchase result ${purchaseresultdetail})`);
+      if (error) throw new Error(`Store refused the license: ${error}`);
+    }
+    if (res.status === 500) throw new Error('Store returned HTTP 500');
+  }
+
   // ------------------------------------------------------------- achievements
 
   async getAchievements(appid: number): Promise<UserStats> {
@@ -495,6 +578,7 @@ export class Bot {
         lastCheck: this.farmLastCheck,
         message: this.farmMessage,
       },
+      freeGames: { autoClaim: a.autoClaimFree, claimed: a.claimedFree },
       unlocker: a.unlocker
         ? { appid: a.unlocker.appid, remaining: a.unlocker.queue.length, nextAt: a.unlocker.nextAt, idle: a.unlocker.idle }
         : null,

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import Schema from 'steam-user/protobufs/generated/_load.js';
 import { parseSchema } from '../achievements';
 import { describeBadgePage, fetchBadgeGames, parseBadgePage } from '../badges';
+import { parseFreeSearch } from '../freegames';
 
 test('parseBadgePage finds games with drops, names, hours and pages', () => {
   const html = `
@@ -215,4 +216,22 @@ test('fetchBadgeGames reports an expired session when sent to the login page', a
       await assert.rejects(fetchBadgeGames('765', []), /session expired/);
     },
   );
+});
+
+test('parseFreeSearch keeps only 100%-off apps and packages', () => {
+  const row = (attrs: string, title: string, discount: string) =>
+    `<a href="https://store.steampowered.com/app/1/X/?snr=1_7_7_2300_150_1" ${attrs} onmouseover="GameHover( this, event, 'global_hover', {&quot;type&quot;:&quot;app&quot;,&quot;id&quot;:1} );" class="search_result_row ds_collapse_flag " data-search-page="1">
+      <div class="responsive_search_name_combined"><div class="search_name"><span class="title">${title}</span></div>
+      ${discount}</div></a>`;
+  const html = [
+    row('data-ds-appid="111" data-ds-itemkey="App_111" data-ds-packageid="9001"', 'Free &amp; Fun', '<div class="discount_block search_discount_block" data-price-final="0" data-discount="100"><div class="discount_pct">-100%</div></div>'),
+    row('data-ds-appid="222" data-ds-itemkey="App_222"', 'Old Markup', '<div class="col search_discount responsive_secondrow"><span>-100%</span></div><div class="discount_pct">-100%</div>'),
+    row('data-ds-appid="333" data-ds-packageid="9003"', 'Half Off', '<div class="search_discount_block" data-discount="50"></div>'),
+    row('data-ds-appid="444" data-ds-packageid="9004"', 'Free To Play', '<div class="search_discount_block" data-discount="0"></div>'),
+    row('data-ds-bundleid="55" data-ds-itemkey="Bundle_55"', 'Free Bundle', '<div class="search_discount_block" data-discount="100"></div>'),
+  ].join('\n');
+  assert.deepEqual(parseFreeSearch(html), [
+    { key: 'sub/9001', appid: 111, packageid: 9001, name: 'Free & Fun', url: 'https://store.steampowered.com/app/1/X/' },
+    { key: 'app/222', appid: 222, packageid: undefined, name: 'Old Markup', url: 'https://store.steampowered.com/app/1/X/' },
+  ]);
 });

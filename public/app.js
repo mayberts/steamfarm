@@ -158,6 +158,7 @@ function renderMain() {
   if (renderedFor !== acc.username) {
     buildPanels(acc);
     renderedFor = acc.username;
+    freeSettingsFilled = false;
     games = [];
     if (acc.status === 'online') loadGames();
   }
@@ -218,6 +219,35 @@ function buildPanels(acc) {
         el('div', { id: 'unlocker-status', class: 'muted' }),
         el('h3', {}, 'Activity'),
         el('div', { id: 'account-log', class: 'log' }),
+      ),
+    ),
+    el('section', { class: 'card stack' },
+      el('div', { class: 'row between wrap' },
+        el('h3', {}, 'Free games'),
+        el('div', { class: 'row' },
+          el('button', { class: 'secondary', onclick: checkFreeGames }, 'Check now'),
+        ),
+      ),
+      el('div', { id: 'free-status', class: 'muted' }),
+      el('div', { id: 'free-list', class: 'stack' }),
+      el('label', { class: 'check' },
+        el('input', { id: 'free-auto', type: 'checkbox', checked: acc.freeGames.autoClaim, onchange: (e) => act('PUT', 'settings', { autoClaimFree: e.target.checked }) }),
+        'Automatically claim free games for this account'),
+      el('details', {},
+        el('summary', { class: 'muted' }, 'Alert settings (all accounts)'),
+        el('div', { class: 'stack' },
+          el('div', { class: 'row wrap' },
+            el('label', { class: 'check' }, el('input', { id: 'free-enabled', type: 'checkbox' }), 'Check for free games'),
+            el('label', {}, 'Every (min)', el('input', { id: 'free-interval', type: 'number', min: '15', max: '1440', class: 'w90' })),
+          ),
+          el('label', {}, 'Alert webhook (Discord webhook or ntfy topic URL, optional)',
+            el('input', { id: 'free-webhook', placeholder: 'https://discord.com/api/webhooks/… or https://ntfy.sh/my-topic' })),
+          el('div', { class: 'row' },
+            el('button', { onclick: saveFreeSettings }, 'Save'),
+            el('button', { class: 'secondary', onclick: testWebhook }, 'Send test alert'),
+            el('span', { id: 'free-msg', class: 'muted small' }),
+          ),
+        ),
       ),
     ),
     el('section', { class: 'card' },
@@ -284,6 +314,8 @@ function updatePanels(acc) {
       : '',
   );
 
+  updateFreeGames(acc);
+
   // Unlocker
   const u = acc.unlocker;
   $('#unlocker-status').replaceChildren(
@@ -308,6 +340,81 @@ function updatePanels(acc) {
 
   if (acc.status === 'online' && games.length === 0 && !loadingGames) loadGames();
   updateIdleCount(acc);
+}
+
+let freeState = null;
+let freeSettingsFilled = false;
+
+async function updateFreeGames(acc) {
+  try {
+    freeState = await api('GET', '/api/free-games');
+  } catch {
+    return;
+  }
+  const status = $('#free-status');
+  if (!status) return;
+  status.textContent = `${freeState.message || 'Not checked yet'}${freeState.lastCheck ? ` · last checked ${fmtTime(freeState.lastCheck)}` : ''}`;
+  const claimed = new Set(acc.freeGames.claimed);
+  $('#free-list').replaceChildren(
+    ...freeState.promos.map((p) =>
+      el('div', { class: 'row between' },
+        el('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.name),
+        claimed.has(p.key)
+          ? el('span', { class: 'pill' }, 'In library')
+          : el('button', { disabled: acc.status !== 'online', onclick: () => claimFree(p.key) }, 'Claim'),
+      ),
+    ),
+  );
+  if (!freeSettingsFilled) {
+    freeSettingsFilled = true;
+    $('#free-enabled').checked = freeState.settings.enabled;
+    $('#free-interval').value = freeState.settings.intervalMin;
+    $('#free-webhook').value = freeState.settings.webhookUrl;
+  }
+}
+
+async function claimFree(key) {
+  await act('POST', 'free-games/claim', { key });
+}
+
+async function checkFreeGames() {
+  $('#free-status').textContent = 'Checking…';
+  try {
+    await api('POST', '/api/free-games/check');
+  } catch (err) {
+    alert(err.message);
+  }
+  refresh();
+}
+
+function freeMsg(text) {
+  const m = $('#free-msg');
+  if (!m) return;
+  m.textContent = text;
+  setTimeout(() => { if (m.textContent === text) m.textContent = ''; }, 3000);
+}
+
+async function saveFreeSettings() {
+  try {
+    await api('PUT', '/api/free-games/settings', {
+      enabled: $('#free-enabled').checked,
+      intervalMin: Number($('#free-interval').value),
+      webhookUrl: $('#free-webhook').value,
+    });
+    freeMsg('Saved');
+  } catch (err) {
+    freeMsg(err.message);
+  }
+}
+
+async function testWebhook() {
+  try {
+    await saveFreeSettings();
+    await api('POST', '/api/free-games/test-webhook');
+    freeMsg('Test alert sent');
+  } catch (err) {
+    freeMsg(err.message);
+  }
 }
 
 function updateIdleCount(acc) {
