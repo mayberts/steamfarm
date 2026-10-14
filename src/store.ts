@@ -1,0 +1,128 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { config } from './config';
+
+export type PersonaStateName = 'online' | 'away' | 'invisible' | 'offline';
+
+export interface FarmSettings {
+  /** Number of games with card drops to idle simultaneously (1-32). */
+  maxConcurrent: number;
+  /** Minutes between badge page re-checks. */
+  checkIntervalMin: number;
+  /** App IDs that are never farmed. */
+  blacklist: number[];
+  /** Start farming automatically when the account logs in. */
+  autoStart: boolean;
+}
+
+export interface UnlockerTask {
+  appid: number;
+  /** Achievement API names still to unlock, in order. */
+  queue: string[];
+  minDelaySec: number;
+  maxDelaySec: number;
+  /** Also "play" the game while unlocking, so unlocks happen during a session. */
+  idle: boolean;
+  /** When the next unlock is due (epoch ms). */
+  nextAt: number;
+}
+
+export interface AccountRecord {
+  /** Steam login name, lower-cased; used as the account key. */
+  username: string;
+  refreshToken?: string;
+  /** Optional mobile authenticator shared secret for automatic Steam Guard codes. */
+  sharedSecret?: string;
+  steamId?: string;
+  /** Start this account automatically when the container starts. */
+  autoStart: boolean;
+  personaState: PersonaStateName;
+  /** Shown to friends as "In non-Steam game: <text>". Takes one of the 32 game slots. */
+  customStatus: string;
+  /** App IDs idled by the playtime booster. */
+  idleGames: number[];
+  farm: FarmSettings;
+  farming: boolean;
+  unlocker?: UnlockerTask;
+}
+
+interface StoreFile {
+  version: 1;
+  webPassword?: string;
+  sessionSecret?: string;
+  accounts: Record<string, AccountRecord>;
+}
+
+export function defaultAccount(username: string): AccountRecord {
+  return {
+    username: username.toLowerCase(),
+    autoStart: true,
+    personaState: 'online',
+    customStatus: '',
+    idleGames: [],
+    farm: { maxConcurrent: 32, checkIntervalMin: 15, blacklist: [], autoStart: false },
+    farming: false,
+  };
+}
+
+/** Tiny JSON-file store. Writes are atomic (write temp file, then rename). */
+class Store {
+  private readonly file = path.join(config.dataDir, 'steamfarm.json');
+  private data: StoreFile = { version: 1, accounts: {} };
+  private saveTimer: NodeJS.Timeout | null = null;
+
+  load(): void {
+    fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+    if (fs.existsSync(this.file)) {
+      this.data = JSON.parse(fs.readFileSync(this.file, 'utf8')) as StoreFile;
+      // Fill in fields added in newer versions.
+      for (const [key, acc] of Object.entries(this.data.accounts)) {
+        const base = defaultAccount(acc.username ?? key);
+        this.data.accounts[key] = { ...base, ...acc, farm: { ...base.farm, ...acc.farm } };
+      }
+    }
+  }
+
+  get raw(): StoreFile {
+    return this.data;
+  }
+
+  accounts(): AccountRecord[] {
+    return Object.values(this.data.accounts);
+  }
+
+  account(username: string): AccountRecord | undefined {
+    return this.data.accounts[username.toLowerCase()];
+  }
+
+  upsertAccount(acc: AccountRecord): void {
+    this.data.accounts[acc.username] = acc;
+    this.save();
+  }
+
+  deleteAccount(username: string): void {
+    delete this.data.accounts[username.toLowerCase()];
+    this.save();
+  }
+
+  /** Debounced save; call after mutating any record. */
+  save(): void {
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.flush();
+    }, 250);
+  }
+
+  flush(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    const tmp = `${this.file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, this.file);
+  }
+}
+
+export const store = new Store();

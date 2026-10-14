@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steamfarm</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="login-view" class="center hidden">
+    <form id="login-form" class="card narrow">
+      <h1>Steamfarm</h1>
+      <p class="muted">Enter the web UI password (<code>WEB_PASSWORD</code>).</p>
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </div>
+
+  <div id="app-view" class="hidden">
+    <header>
+      <span class="brand">Steamfarm</span>
+      <nav id="account-tabs"></nav>
+      <button id="add-account-btn" class="secondary">+ Add account</button>
+      <button id="logout-btn" class="link">Sign out</button>
+    </header>
+    <main id="main"></main>
+  </div>
+
+  <dialog id="add-dialog">
+    <h2>Add Steam account</h2>
+    <div class="tabs-inline">
+      <button class="tab-btn active" data-pane="pw-pane">Username &amp; password</button>
+      <button class="tab-btn" data-pane="qr-pane">QR code</button>
+    </div>
+    <form id="pw-pane" class="pane">
+      <input id="add-username" placeholder="Steam login name" autocomplete="off" required>
+      <input id="add-password" type="password" placeholder="Password" autocomplete="off" required>
+      <input id="add-secret" placeholder="Shared secret (optional, for automatic 2FA codes)" autocomplete="off">
+      <p class="muted small">Your password is sent to Steam once and never stored. Steamfarm keeps only Steam's login token.</p>
+      <button type="submit">Log in</button>
+    </form>
+    <div id="qr-pane" class="pane hidden">
+      <p class="muted">Scan with the Steam mobile app (Steam Guard tab, then the QR icon).</p>
+      <div id="qr-box" class="qr-box"></div>
+      <p id="qr-status" class="muted"></p>
+      <button id="qr-start" type="button">Generate QR code</button>
+    </div>
+    <p id="add-error" class="error"></p>
+    <div class="row end"><button id="add-close" class="secondary" type="button">Close</button></div>
+  </dialog>
+
+  <dialog id="ach-dialog" class="wide">
+    <div class="row between">
+      <h2 id="ach-title">Achievements</h2>
+      <button id="ach-close" class="secondary" type="button">Close</button>
+    </div>
+    <div class="row wrap">
+      <input id="ach-filter" placeholder="Filter achievements">
+      <button id="ach-unlock-all" class="secondary" type="button">Unlock all</button>
+      <button id="ach-lock-all" class="secondary" type="button">Lock all</button>
+    </div>
+    <details class="unlocker">
+      <summary>Gradual unlocker (one at a time with random delays)</summary>
+      <div class="row wrap">
+        <label>Min delay (min) <input id="unl-min" type="number" min="1" value="5"></label>
+        <label>Max delay (min) <input id="unl-max" type="number" min="1" value="30"></label>
+        <label class="check"><input id="unl-idle" type="checkbox" checked> Idle the game while unlocking</label>
+        <button id="unl-start" type="button">Start unlocker</button>
+      </div>
+    </details>
+    <p id="ach-error" class="error"></p>
+    <div id="ach-list" class="ach-list"></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
