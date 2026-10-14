@@ -13,6 +13,7 @@ It logs into Steam itself, the same way ArchiSteamFarm does, so it runs headless
 - **Free game alerts and auto-claim:** checks the Steam store for paid games that are 100% off (free to keep), shows them in the UI, and can send a Discord or ntfy alert. Each account can claim them with one click or automatically, skipping games it already owns.
 - **Multiple accounts**, each with its own online status (online, away, invisible or offline) and an optional custom "playing" text.
 - **Login options:** username and password with a Steam Guard code (email or mobile), a mobile authenticator shared secret for fully automatic 2FA, or QR code login from the Steam mobile app.
+- **Themes:** System (follows your device), Light, Dark, Steam, Midnight, Nord, Forest and Ember, picked in the header and remembered per browser.
 - **Pauses automatically** when you start playing on another device, and resumes when you stop.
 - **Survives restarts:** accounts log back in automatically using Steam's saved login token.
 

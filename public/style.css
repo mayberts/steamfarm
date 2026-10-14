@@ -1,3 +1,5 @@
+/* Themes. "System" (no data-theme) follows the OS light/dark setting;
+   any other theme is chosen in the header and stored per browser. */
 :root {
   --bg: #f4f5f7;
   --surface: #ffffff;
@@ -11,9 +13,10 @@
   --warn: #b45309;
   --err: #b91c1c;
   --radius: 8px;
+  color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #12151b;
     --surface: #1a1f27;
     --surface-2: #232934;
@@ -25,7 +28,92 @@
     --ok: #4ade80;
     --warn: #fbbf24;
     --err: #f87171;
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #12151b;
+  --surface: #1a1f27;
+  --surface-2: #232934;
+  --border: #2f3744;
+  --text: #e6e9ef;
+  --muted: #96a0b0;
+  --accent: #4f8cff;
+  --accent-text: #0b0e13;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --err: #f87171;
+  color-scheme: dark;
+}
+:root[data-theme="steam"] {
+  --bg: #171a21;
+  --surface: #1b2838;
+  --surface-2: #2a475e;
+  --border: #31506b;
+  --text: #dfe6ee;
+  --muted: #8f98a0;
+  --accent: #66c0f4;
+  --accent-text: #0e1a26;
+  --ok: #a4d007;
+  --warn: #e5b143;
+  --err: #ff6b6b;
+  color-scheme: dark;
+}
+:root[data-theme="midnight"] {
+  --bg: #08080c;
+  --surface: #121219;
+  --surface-2: #1c1c27;
+  --border: #2b2b3b;
+  --text: #ecebf5;
+  --muted: #9a98b0;
+  --accent: #a78bfa;
+  --accent-text: #120d24;
+  --ok: #6ee7b7;
+  --warn: #fcd34d;
+  --err: #fb7185;
+  color-scheme: dark;
+}
+:root[data-theme="nord"] {
+  --bg: #2e3440;
+  --surface: #3b4252;
+  --surface-2: #434c5e;
+  --border: #4c566a;
+  --text: #eceff4;
+  --muted: #b3bccc;
+  --accent: #88c0d0;
+  --accent-text: #2e3440;
+  --ok: #a3be8c;
+  --warn: #ebcb8b;
+  --err: #e08a92;
+  color-scheme: dark;
+}
+:root[data-theme="forest"] {
+  --bg: #0f1a14;
+  --surface: #16241c;
+  --surface-2: #1f3127;
+  --border: #2c4436;
+  --text: #e3efe7;
+  --muted: #93ab9c;
+  --accent: #4ade80;
+  --accent-text: #08130c;
+  --ok: #86efac;
+  --warn: #facc15;
+  --err: #f87171;
+  color-scheme: dark;
+}
+:root[data-theme="ember"] {
+  --bg: #1a1412;
+  --surface: #241b18;
+  --surface-2: #322521;
+  --border: #48352f;
+  --text: #f3e9e4;
+  --muted: #b39d93;
+  --accent: #fb923c;
+  --accent-text: #1f1009;
+  --ok: #86efac;
+  --warn: #fcd34d;
+  --err: #f87171;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -192,3 +280,4 @@ dialog .pane { display: flex; flex-direction: column; gap: 10px; margin-top: 12p
 }
 .w90 { width: 90px; }
 .grow { flex: 1; }
+#theme-select { padding: 5px 8px; }
