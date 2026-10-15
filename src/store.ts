@@ -55,6 +55,26 @@ export interface AccountRecord {
   skippedFree: Record<string, string>;
   /** App IDs the user marked as favourite. */
   favorites: number[];
+  freeLicenses: FreeLicenseSettings;
+}
+
+export interface QueuedLicense {
+  kind: 'app' | 'sub';
+  id: number;
+  name: string;
+}
+
+export interface FreeLicenseSettings {
+  /** Claim free-to-play games, demos and free packages as they appear on Steam (like ASF's FreePackages). */
+  enabled: boolean;
+  /** Wanted categories: game, dlc, demo, music, other. */
+  types: string[];
+  queue: QueuedLicense[];
+  /** When each recent activation was attempted (epoch ms), for Steam's rate limit. */
+  activations: number[];
+  pausedUntil: number;
+  /** Most recent results, newest first. */
+  history: (QueuedLicense & { at: number; result: string; ok: boolean })[];
 }
 
 export interface FreePromo {
@@ -80,6 +100,8 @@ interface StoreFile {
   webPassword?: string;
   sessionSecret?: string;
   freeGames?: FreeGamesSettings;
+  /** Last PICS change number processed by the free license watcher. */
+  licenses?: { changeNumber: number };
   accounts: Record<string, AccountRecord>;
 }
 
@@ -96,6 +118,7 @@ export function defaultAccount(username: string): AccountRecord {
     claimedFree: [],
     skippedFree: {},
     favorites: [],
+    freeLicenses: { enabled: false, types: ['game', 'dlc', 'demo', 'music', 'other'], queue: [], activations: [], pausedUntil: 0, history: [] },
   };
 }
 
@@ -122,7 +145,7 @@ class Store {
       // Fill in fields added in newer versions.
       for (const [key, acc] of Object.entries(this.data.accounts)) {
         const base = defaultAccount(acc.username ?? key);
-        this.data.accounts[key] = { ...base, ...acc, farm: { ...base.farm, ...acc.farm } };
+        this.data.accounts[key] = { ...base, ...acc, farm: { ...base.farm, ...acc.farm }, freeLicenses: { ...base.freeLicenses, ...acc.freeLicenses } };
       }
     }
   }

@@ -537,3 +537,4 @@ dialog .pane { display: flex; flex-direction: column; gap: 10px; margin-top: 14p
   .ach .pct { display: none; }
   #theme-select { max-width: 96px; }
 }
+#lic-list { max-height: 260px; overflow-y: auto; }

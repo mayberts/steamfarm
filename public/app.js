@@ -595,10 +595,52 @@ function buildFree(acc) {
             el('input', { type: 'checkbox', checked: acc.freeGames.autoClaim, onchange: (e) => act('PUT', 'settings', { autoClaimFree: e.target.checked }) }),
             'Automatically claim for this account'),
         ),
+        licensePanel(acc),
         freeSettingsOpen ? freeSettingsPanel() : null,
       ),
     ),
   ];
+}
+
+const LICENSE_TYPES = [['game', 'Games'], ['dlc', 'DLC'], ['demo', 'Demos'], ['music', 'Soundtracks'], ['other', 'Other']];
+
+function licensePanel(acc) {
+  const l = acc.freeLicenses;
+  const setTypes = () => {
+    const types = [...document.querySelectorAll('.lic-type:checked')].map((c) => c.value);
+    act('PUT', 'settings', { freeLicenses: { types } });
+  };
+  return el('div', { class: 'panel' },
+    el('div', { class: 'row' }, icon('gift', 'gold'), el('h3', {}, 'Free licenses')),
+    el('p', { class: 'muted small' },
+      'Free-to-play games, demos and free packages, picked up from Steam\'s change feed as they appear, like ASF\'s FreePackages plugin. ',
+      'Steam allows about 30 of these per 90 minutes, so Steamfarm claims up to 25 and then waits.'),
+    el('label', { class: 'check' },
+      el('input', { type: 'checkbox', checked: l.enabled, onchange: (e) => act('PUT', 'settings', { freeLicenses: { enabled: e.target.checked } }) }),
+      'Claim free licenses for this account'),
+    el('div', { class: 'row wrap' },
+      ...LICENSE_TYPES.map(([value, label]) => el('label', { class: 'check' },
+        el('input', { type: 'checkbox', class: 'lic-type', value, checked: l.types.includes(value), onchange: setTypes }), label)),
+    ),
+    el('div', { id: 'lic-status', class: 'muted small' }),
+    el('div', { id: 'lic-list', class: 'log' }),
+  );
+}
+
+function updateLicenses(acc) {
+  const box = $('#lic-status');
+  if (!box) return;
+  const l = acc.freeLicenses;
+  const w = freeState?.licenses;
+  box.textContent = [
+    l.enabled ? `${l.queued} queued · ${l.recent}/${l.limit} claimed in the last 90 min` : 'Off',
+    l.pausedUntil ? `paused until ${fmtTime(l.pausedUntil)}` : '',
+    w?.lastCheck ? `feed checked ${fmtTime(w.lastCheck)}` : w?.message || '',
+  ].filter(Boolean).join(' · ');
+  redraw($('#lic-list'), JSON.stringify([l.upNext, l.history]), () => [
+    ...l.upNext.map((q) => el('div', { class: 'muted' }, `queued  ${q.kind}/${q.id}  ${q.name}`)),
+    ...l.history.map((h) => el('div', { class: h.ok ? '' : 'warn', title: h.result }, `${fmtTime(h.at)}  ${h.kind}/${h.id}  ${h.name}${h.ok ? '' : ` (${h.result})`}`)),
+  ]);
 }
 
 function freeSettingsPanel() {
@@ -621,6 +663,7 @@ function updateFree(acc) {
   $('#free-sub').textContent = freeState
     ? `${promos.length ? `${promos.length} free game${promos.length === 1 ? '' : 's'} available` : freeState.message || 'Not checked yet'}${freeState.lastCheck ? ` · checked ${fmtTime(freeState.lastCheck)}` : ''}`
     : 'Loading…';
+  updateLicenses(acc);
   const claimed = new Set(acc.freeGames.claimed);
   const sig = JSON.stringify([promos.map((p) => p.key), acc.freeGames, acc.status]);
   redraw($('#free-grid'), sig, () => {

@@ -7,6 +7,16 @@ import { AccountRecord, FreePromo, PersonaStateName, store } from './store';
 import { DropInfo, fetchBadgeGames } from './badges';
 import { fetchAppDetails, pickFreePackage } from './freegames';
 import {
+  ACTIVATION_LIMIT,
+  ACTIVATION_PERIOD_MS,
+  FreeLicenseCandidate,
+  isRedeemableApp,
+  isRedeemablePackage,
+  isWanted,
+  LICENSE_CATEGORIES,
+} from './licenses';
+import { productInfo } from './licensewatch';
+import {
   CURRENCIES,
   fetchInventory,
   fetchListings,
@@ -83,6 +93,9 @@ export class Bot {
   private idleSince = new Map<number, number>();
   private farmTimer: NodeJS.Timeout | null = null;
   private unlockTimer: NodeJS.Timeout | null = null;
+  private licenseTimer: NodeJS.Timeout | null = null;
+  /** App IDs in each owned package, filled lazily from PICS. */
+  private licenseApps = new Map<number, number[]>();
   private reconnectTimer: NodeJS.Timeout | null = null;
   private pendingPassword: string | null = null;
 
@@ -137,6 +150,7 @@ export class Bot {
     this.idleSince.clear();
     this.stopFarmTimer();
     this.stopUnlockTimer();
+    this.stopLicenseTimer();
     if (this.client) {
       const client = this.client;
       this.client = null;
@@ -191,6 +205,7 @@ export class Bot {
       this.applyGames();
       if (this.account.farming || this.account.farm.autoStart) this.startFarming();
       if (this.account.unlocker) this.scheduleUnlock();
+      this.scheduleLicense(10_000);
     });
 
     client.on('user', (sid: any, user: any) => {
@@ -225,6 +240,7 @@ export class Bot {
       this.client = null;
       this.stopFarmTimer();
       this.stopUnlockTimer();
+      this.stopLicenseTimer();
       this.guard = null;
       this.guardCallback = null;
       if (err.eresult !== undefined && NEEDS_REAUTH.has(err.eresult)) {
@@ -314,6 +330,7 @@ export class Bot {
 
   updateSettings(patch: Partial<Pick<AccountRecord, 'personaState' | 'customStatus' | 'autoStart' | 'sharedSecret' | 'autoClaimFree'>> & {
     farm?: Partial<AccountRecord['farm']>;
+    freeLicenses?: { enabled?: boolean; types?: string[] };
   }): void {
     if (patch.personaState && patch.personaState in PERSONA_STATES) this.account.personaState = patch.personaState;
     if (typeof patch.customStatus === 'string') this.account.customStatus = patch.customStatus.slice(0, 64);
@@ -329,6 +346,16 @@ export class Bot {
       if (Number.isFinite(patch.farm.checkIntervalMin)) f.checkIntervalMin = Math.min(240, Math.max(5, Math.floor(patch.farm.checkIntervalMin!)));
       if (Array.isArray(patch.farm.blacklist)) f.blacklist = patch.farm.blacklist.map(Number).filter((n) => Number.isInteger(n) && n > 0);
       if (typeof patch.farm.autoStart === 'boolean') f.autoStart = patch.farm.autoStart;
+    }
+    if (patch.freeLicenses) {
+      const l = this.account.freeLicenses;
+      if (typeof patch.freeLicenses.enabled === 'boolean') {
+        l.enabled = patch.freeLicenses.enabled;
+        if (!l.enabled) l.queue = [];
+      }
+      if (Array.isArray(patch.freeLicenses.types)) {
+        l.types = LICENSE_CATEGORIES.filter((c) => patch.freeLicenses!.types!.includes(c));
+      }
     }
     store.save();
     if (this.client && this.status === 'online') {
@@ -491,7 +518,7 @@ export class Bot {
   }
 
   /** The store's "Add to Account" for free packages. */
-  private async addFreeLicense(packageid: number): Promise<void> {
+  async addFreeLicense(packageid: number): Promise<void> {
     const cookies = await this.ensureWebSession();
     const sessionid = cookies.find((c) => c.startsWith('sessionid='))?.slice('sessionid='.length);
     if (!sessionid) throw new Error('Steam web session has no sessionid');
@@ -520,10 +547,133 @@ export class Bot {
     }
     if (body && typeof body === 'object' && !Array.isArray(body)) {
       const { purchaseresultdetail, error } = body as { purchaseresultdetail?: number; error?: string };
-      if (purchaseresultdetail) throw new Error(`Store refused the license (purchase result ${purchaseresultdetail})`);
+      if (purchaseresultdetail) {
+        throw Object.assign(new Error(`Store refused the license (purchase result ${purchaseresultdetail})`), { purchaseResult: purchaseresultdetail });
+      }
       if (error) throw new Error(`Store refused the license: ${error}`);
     }
     if (res.status === 500) throw new Error('Store returned HTTP 500');
+  }
+
+  // ----------------------------------------------------------- free licenses
+
+  /** The logged-in Steam client, for the PICS watcher. */
+  get steamClient(): any {
+    return this.status === 'online' ? this.client : null;
+  }
+
+  /** Packages and apps this account owns, from its license list. */
+  private async ownership(): Promise<{ apps: Set<number>; packages: Set<number> }> {
+    const client = this.requireOnline();
+    const packages = new Set<number>((client.licenses ?? []).map((l: any) => Number(l.package_id)));
+    const unknown = [...packages].filter((id) => !this.licenseApps.has(id));
+    if (unknown.length) {
+      const info = await productInfo(client, [], unknown);
+      for (const id of unknown) {
+        const appids = info.packages[id]?.appids;
+        this.licenseApps.set(id, appids && typeof appids === 'object' ? Object.values(appids).map(Number) : []);
+      }
+    }
+    const apps = new Set<number>();
+    for (const id of packages) for (const appid of this.licenseApps.get(id) ?? []) apps.add(appid);
+    return { apps, packages };
+  }
+
+  /** Called by the watcher with free apps and packages that just changed on Steam. */
+  async queueFreeLicenses(found: FreeLicenseCandidate[]): Promise<void> {
+    const l = this.account.freeLicenses;
+    if (!l.enabled || this.status !== 'online' || !found.length) return;
+    const { apps, packages } = await this.ownership();
+    const country: string | null = this.client?.accountInfo?.country?.toUpperCase() || null;
+    const queued = new Set(l.queue.map((q) => `${q.kind}/${q.id}`));
+    let added = 0;
+    for (const c of found) {
+      if (queued.has(`${c.kind}/${c.id}`) || !isWanted(c, l.types)) continue;
+      const ok = c.kind === 'app'
+        ? isRedeemableApp(c.app!, apps, country)
+        : isRedeemablePackage(c.pkg!, c.contents ?? [], apps, packages, country);
+      if (!ok) continue;
+      if (c.kind === 'sub') {
+        // A package explains failures better than its apps, so drop the apps it covers.
+        const covered = new Set(c.pkg!.appids);
+        l.queue = l.queue.filter((q) => q.kind !== 'app' || !covered.has(q.id));
+      }
+      l.queue.push({ kind: c.kind, id: c.id, name: c.name });
+      queued.add(`${c.kind}/${c.id}`);
+      added++;
+    }
+    if (!added) return;
+    store.save();
+    this.log.info(`Queued ${added} free license(s) to claim`);
+    if (!this.licenseTimer) this.scheduleLicense(1000);
+  }
+
+  private stopLicenseTimer(): void {
+    if (this.licenseTimer) clearTimeout(this.licenseTimer);
+    this.licenseTimer = null;
+  }
+
+  private scheduleLicense(ms: number): void {
+    this.stopLicenseTimer();
+    const l = this.account.freeLicenses;
+    if (!l.enabled || !l.queue.length) return;
+    this.licenseTimer = setTimeout(() => void this.licenseTick(), Math.max(1000, ms));
+  }
+
+  private recordLicense(item: { kind: 'app' | 'sub'; id: number; name: string }, ok: boolean, result: string): void {
+    const l = this.account.freeLicenses;
+    l.history.unshift({ ...item, at: Date.now(), ok, result });
+    l.history.length = Math.min(l.history.length, 100);
+  }
+
+  private async licenseTick(): Promise<void> {
+    this.licenseTimer = null;
+    const l = this.account.freeLicenses;
+    if (this.status !== 'online' || !l.enabled || !l.queue.length) return;
+    const now = Date.now();
+    if (l.pausedUntil > now) return this.scheduleLicense(l.pausedUntil - now);
+    l.activations = l.activations.filter((t) => now - t < ACTIVATION_PERIOD_MS);
+    if (l.activations.length >= ACTIVATION_LIMIT) {
+      l.pausedUntil = Math.min(...l.activations) + ACTIVATION_PERIOD_MS + 60_000;
+      store.save();
+      this.log.info(`Pausing free license activations until ${new Date(l.pausedUntil).toLocaleTimeString()} (Steam allows about 30 per 90 minutes)`);
+      return this.scheduleLicense(l.pausedUntil - now);
+    }
+
+    const item = l.queue[0];
+    let next = 5000;
+    l.activations.push(now);
+    try {
+      if (item.kind === 'app') {
+        const res = await this.client.requestFreeLicense([item.id]);
+        const granted = [...(res.grantedAppIds ?? []).map((id: number) => `app/${id}`), ...(res.grantedPackageIds ?? []).map((id: number) => `sub/${id}`)];
+        this.recordLicense(item, granted.length > 0, granted.length ? `Granted ${granted.join(', ')}` : 'Nothing granted');
+        if (granted.length) this.log.info(`Claimed free license app/${item.id} (${item.name}): ${granted.join(', ')}`);
+      } else {
+        await this.addFreeLicense(item.id);
+        this.recordLicense(item, true, 'Granted');
+        this.log.info(`Claimed free license sub/${item.id} (${item.name})`);
+      }
+      this.ownedGamesAt = 0;
+      l.queue.shift();
+    } catch (err) {
+      const e = err as Error & { eresult?: number; purchaseResult?: number };
+      // EResult 84 RateLimitExceeded; purchase result 53 "too many recent purchases".
+      if (e.eresult === SteamUser.EResult.RateLimitExceeded || e.purchaseResult === 53) {
+        l.pausedUntil = now + ACTIVATION_PERIOD_MS + 60_000;
+        this.log.info(`Steam rate-limited free license activations; pausing until ${new Date(l.pausedUntil).toLocaleTimeString()}`);
+        next = l.pausedUntil - now;
+      } else if (e.eresult === SteamUser.EResult.Timeout || /timed? ?out|session expired/i.test(e.message)) {
+        l.activations.pop();
+        next = 5 * 60_000;
+      } else {
+        l.queue.shift();
+        this.recordLicense(item, false, e.message);
+        this.log.warn(`Could not claim ${item.kind}/${item.id} (${item.name}): ${e.message}`);
+      }
+    }
+    store.save();
+    this.scheduleLicense(next);
   }
 
   // ------------------------------------------------------------- inventory
@@ -758,6 +908,16 @@ export class Bot {
         message: this.farmMessage,
       },
       freeGames: { autoClaim: a.autoClaimFree, claimed: a.claimedFree, skipped: a.skippedFree },
+      freeLicenses: {
+        enabled: a.freeLicenses.enabled,
+        types: a.freeLicenses.types,
+        queued: a.freeLicenses.queue.length,
+        upNext: a.freeLicenses.queue.slice(0, 10),
+        recent: a.freeLicenses.activations.filter((t) => Date.now() - t < ACTIVATION_PERIOD_MS).length,
+        limit: ACTIVATION_LIMIT,
+        pausedUntil: a.freeLicenses.pausedUntil > Date.now() ? a.freeLicenses.pausedUntil : 0,
+        history: a.freeLicenses.history.slice(0, 30),
+      },
       sellJob: this.sellJob,
       unlocker: a.unlocker
         ? {
