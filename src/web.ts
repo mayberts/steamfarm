@@ -171,9 +171,11 @@ export function createServer() {
   api.put('/accounts/:name/settings', h((req) => {
     const bot = manager.get(param(req, 'name'));
     const wasAutoClaim = bot.account.autoClaimFree;
+    const wasLicenses = bot.account.freeLicenses.enabled;
     bot.updateSettings(req.body ?? {});
     // Turning auto-claim on claims whatever is free right now instead of waiting for the next check.
     if (!wasAutoClaim && bot.account.autoClaimFree) void bot.autoClaimFree(manager.freeGames.promos);
+    if (!wasLicenses && bot.account.freeLicenses.enabled) void manager.freeLicenses.check();
     return bot.snapshot();
   }));
 
@@ -212,7 +214,14 @@ export function createServer() {
   api.get('/free-games', h(() => {
     const { enabled, intervalMin, webhookUrl } = store.freeGames();
     const w = manager.freeGames;
-    return { settings: { enabled, intervalMin, webhookUrl }, promos: w.promos, lastCheck: w.lastCheck, message: w.message };
+    const l = manager.freeLicenses;
+    return {
+      settings: { enabled, intervalMin, webhookUrl },
+      promos: w.promos,
+      lastCheck: w.lastCheck,
+      message: w.message,
+      licenses: { lastCheck: l.lastCheck, message: l.message, changeNumber: l.changeNumber },
+    };
   }));
   api.put('/free-games/settings', h((req) => {
     const settings = store.freeGames();
@@ -225,7 +234,10 @@ export function createServer() {
     store.save();
     manager.freeGames.reschedule();
   }));
-  api.post('/free-games/check', h(() => manager.freeGames.check()));
+  api.post('/free-games/check', h(async () => {
+    void manager.freeLicenses.check();
+    await manager.freeGames.check();
+  }));
   api.post('/free-games/test-webhook', h(() => manager.freeGames.testWebhook()));
   api.get('/accounts/:name/inventory', h((req) => manager.get(param(req, 'name')).inventory(req.query.refresh === '1')));
   api.get('/accounts/:name/market/price', h((req) => {
