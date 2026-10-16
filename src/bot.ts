@@ -369,7 +369,9 @@ export class Bot {
   async getOwnedGames(force = false): Promise<OwnedGame[]> {
     const client = this.requireOnline();
     if (!force && this.ownedGames && Date.now() - this.ownedGamesAt < 10 * 60_000) return this.ownedGames;
-    const res = await client.getUserOwnedApps(client.steamID, { includePlayedFreeGames: true, includeFreeSub: false });
+    // Count every game the account has a license for, as SteamDB does: free-to-play games it never
+    // launched (free subs) and apps Steam hasn't vetted yet are left out by default.
+    const res = await client.getUserOwnedApps(client.steamID, { includePlayedFreeGames: true, includeFreeSub: true, skipUnvettedApps: false });
     this.ownedGames = (res.apps ?? [])
       .map((a: any) => ({
         appid: a.appid,

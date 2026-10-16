@@ -249,8 +249,13 @@ async function loadGames(force = false) {
   if (!acc || acc.status !== 'online') return;
   loadingGames = true;
   try {
+    const before = gamesFor === acc.username ? games.length : undefined;
     games = await api('GET', `${accPath('games')}${force ? '?refresh=1' : ''}`);
     gamesFor = acc.username;
+    if (force) {
+      const diff = before === undefined ? 0 : games.length - before;
+      toast(`Library reloaded: ${games.length} games${diff ? ` (${diff > 0 ? '+' : ''}${diff})` : ''}`);
+    }
   } catch (err) {
     toast(`Could not load games: ${err.message}`, 'err');
   } finally {
