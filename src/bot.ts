@@ -85,6 +85,10 @@ export class Bot {
   private webSessionAt = 0;
   private ownedGames: OwnedGame[] | null = null;
   private ownedGamesAt = 0;
+  /** Name and type of apps seen in owned packages, from PICS. */
+  private appMeta = new Map<number, { name: string; type: string }>();
+  /** Bumped whenever a claim adds to the library, so the UI knows to reload it. */
+  libraryVersion = 0;
   private inventoryCache: InventoryItem[] | null = null;
   private inventoryAt = 0;
   /** The current or last market selling run, shown in the UI. */
@@ -380,8 +384,36 @@ export class Bot {
         icon: a.img_icon_url ?? '',
       }))
       .sort((a: OwnedGame, b: OwnedGame) => a.name.localeCompare(b.name));
+    // Steam leaves out free games that were never launched, which is most free licenses.
+    // Add every game the account holds a license for.
+    try {
+      const extra = await this.licensedGames(new Set(this.ownedGames!.map((g) => g.appid)));
+      if (extra.length) this.ownedGames = [...this.ownedGames!, ...extra].sort((a, b) => a.name.localeCompare(b.name));
+    } catch (err) {
+      this.log.warn(`Could not add licensed games to the library: ${(err as Error).message}`);
+    }
     this.ownedGamesAt = Date.now();
     return this.ownedGames!;
+  }
+
+  private async licensedGames(have: Set<number>): Promise<OwnedGame[]> {
+    const client = this.requireOnline();
+    const { apps } = await this.ownership();
+    const unknown = [...apps].filter((id) => !have.has(id) && !this.appMeta.has(id));
+    if (unknown.length) {
+      const info = await productInfo(client, unknown, []);
+      for (const id of unknown) {
+        const common = info.apps[id]?.common;
+        this.appMeta.set(id, { name: String(common?.name ?? ''), type: String(common?.type ?? '').toLowerCase() });
+      }
+    }
+    const games: OwnedGame[] = [];
+    for (const id of apps) {
+      const meta = this.appMeta.get(id);
+      if (have.has(id) || meta?.type !== 'game' || !meta.name) continue;
+      games.push({ appid: id, name: meta.name, playtimeMinutes: 0, icon: '' });
+    }
+    return games;
   }
 
   // ------------------------------------------------------------ card farming
@@ -493,6 +525,7 @@ export class Bot {
     delete this.account.skippedFree[promo.key];
     this.markClaimed(promo.key);
     this.ownedGamesAt = 0;
+    this.libraryVersion++;
     this.log.info(`Claimed free game: ${promo.name}`);
     return true;
   }
@@ -657,6 +690,7 @@ export class Bot {
         this.log.info(`Claimed free license sub/${item.id} (${item.name})`);
       }
       this.ownedGamesAt = 0;
+      this.libraryVersion++;
       l.queue.shift();
     } catch (err) {
       const e = err as Error & { eresult?: number; purchaseResult?: number };
@@ -896,6 +930,7 @@ export class Bot {
       playing: this.status === 'online' ? this.playing : [],
       idling: this.idlingDetails(),
       favorites: a.favorites,
+      libraryVersion: this.libraryVersion,
       settings: {
         autoStart: a.autoStart,
         personaState: a.personaState,
