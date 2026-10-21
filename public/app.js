@@ -153,6 +153,7 @@ let state = { accounts: [], log: [] };
 let selected = storage.get('steamfarm-account', null);
 let games = []; // owned games of the selected account
 let gamesFor = null;
+let gamesVersion = null;
 let loadingGames = false;
 let freeState = null;
 let pollTimer = null;
@@ -237,7 +238,8 @@ async function refresh() {
   }
   if (!state.accounts.some((a) => a.username === selected)) selected = state.accounts[0]?.username ?? null;
   const acc = current();
-  if (acc && acc.status === 'online' && gamesFor !== acc.username && !loadingGames) loadGames();
+  // Reload when switching account, or when a claim added games to the library.
+  if (acc && acc.status === 'online' && (gamesFor !== acc.username || gamesVersion !== acc.libraryVersion) && !loadingGames) loadGames();
   if (route().page === 'free' || !freeState) {
     freeState = await api('GET', '/api/free-games').catch(() => freeState);
   }
@@ -250,8 +252,10 @@ async function loadGames(force = false) {
   loadingGames = true;
   try {
     const before = gamesFor === acc.username ? games.length : undefined;
-    games = await api('GET', `${accPath('games')}${force ? '?refresh=1' : ''}`);
+    const version = acc.libraryVersion;
+    games = await api('GET', `${accPath('games')}${force || gamesVersion !== version ? '?refresh=1' : ''}`);
     gamesFor = acc.username;
+    gamesVersion = version;
     if (force) {
       const diff = before === undefined ? 0 : games.length - before;
       toast(`Library reloaded: ${games.length} games${diff ? ` (${diff > 0 ? '+' : ''}${diff})` : ''}`);
